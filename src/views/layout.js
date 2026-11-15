@@ -217,6 +217,7 @@ const ADMIN_NAV = [
     group: "Website",
     items: [
       { href: "/admin/pages", label: "Pages", iconName: "layout", perm: "content.manage", module: "content" },
+      { href: "/admin/settings/site", label: "Header & SEO", iconName: "settings", perm: "settings.manage" },
       { href: "/admin/navigation", label: "Navigation", iconName: "menu", perm: "content.manage", module: "content" },
       { href: "/admin/faqs", label: "FAQs", iconName: "help", perm: "content.manage", module: "content" },
       { href: "/admin/testimonials", label: "Testimonials", iconName: "star", perm: "content.manage", module: "content" },

@@ -175,7 +175,7 @@ protectedRoutes.post("/setup/complete", requirePermission("settings.manage"), (r
 
 /* -------------------------------- settings -------------------------------- */
 
-const SETTINGS_NAMESPACES = ["business", "hours", "catalog", "commerce", "bookings", "email"];
+const SETTINGS_NAMESPACES = ["business", "hours", "catalog", "commerce", "bookings", "email", "site"];
 
 protectedRoutes.get("/settings/:ns", requirePermission("settings.manage"), (req, res, next) => {
   const ns = req.params.ns;
