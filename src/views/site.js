@@ -23,7 +23,7 @@ export function pageHeader({ eyebrow = "", title, text = "", crumbs = [] }) {
     <div class="wrap">
       ${crumbs.length ? `<nav class="crumbs" aria-label="Breadcrumb">${crumbs.map((c, i) => `${i ? "<span>/</span>" : ""}${c.href ? `<a href="${esc(c.href)}">${esc(c.label)}</a>` : `<span>${esc(c.label)}</span>`}`).join("")}</nav>` : ""}
       ${eyebrow ? `<p class="eyebrow">${esc(eyebrow)}</p>` : ""}
-      <h1>${esc(title)}</h1>
+      ${title ? `<h1>${esc(title)}</h1>` : ""}
       ${text ? `<p class="lede">${esc(text)}</p>` : ""}
     </div>
   </header>`;
