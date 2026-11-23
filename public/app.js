@@ -179,9 +179,10 @@
   if (checkoutForm) initCheckout(checkoutForm);
 
   function initCheckout(form) {
+    // The order summary and totals live in the page sidebar, outside the form.
     const itemsField = form.querySelector("[data-cart-field]");
-    const summary = form.querySelector("[data-cart-summary]");
-    const totals = form.querySelector("[data-cart-totals]");
+    const summary = document.querySelector("[data-cart-summary]");
+    const totals = document.querySelector("[data-cart-totals]");
     const errorBox = form.querySelector("[data-checkout-error]");
     const submit = form.querySelector("[data-checkout-submit]");
     const empty = document.querySelector("[data-cart-empty]");
@@ -226,6 +227,11 @@
         if (!res.ok) { showError(data.error || "Could not price the cart."); if (totals) totals.innerHTML = ""; return; }
         quoteData = data;
         showError("");
+        // The server decides money, so the summary lines follow the quote, not
+        // the local cart (prices may have changed since the item was added).
+        if (summary) {
+          summary.innerHTML = data.lines.map((l) => `<div class="cart-line"><div class="cart-line-main"><strong>${esc(l.name)}</strong><small>${l.qty} × ${money(l.unit_price_cents)}</small></div><div class="cart-line-right">${money(l.line_total_cents)}</div></div>`).join("");
+        }
         if (totals) {
           totals.innerHTML = `
             <p><span>Subtotal</span><span>${money(data.subtotal_cents)}</span></p>

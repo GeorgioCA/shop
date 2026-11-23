@@ -4,7 +4,7 @@
 import { db } from "../core/db.js";
 import { config, socialLinks, businessAddressLines, DAYS } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
-import { mediaUrl } from "../core/media.js";
+import { mediaUrl, mediaExists } from "../core/media.js";
 import { esc, money } from "../core/util.js";
 import { icon, flashMessage, avatar } from "./components.js";
 import { can } from "../core/auth.js";
@@ -69,7 +69,7 @@ export function siteLayout({
   const n = nonce ? ` nonce="${esc(nonce)}"` : "";
   const fullTitle = title ? `${title} · ${b.name}` : (s.seoTitle || `${b.name}${b.tagline ? ` — ${b.tagline}` : ""}`);
   const desc = description || s.seoDescription || b.description || "";
-  const logo = cfg.theme.logo;
+  const logo = mediaExists(cfg.theme.logo) ? cfg.theme.logo : "";
   const nav = headerLinks();
   const foot = footerLinks();
   const socials = socialLinks();
@@ -94,7 +94,7 @@ ${noindex ? '<meta name="robots" content="noindex,nofollow">' : ""}
 <meta property="og:description" content="${esc(desc.slice(0, 300))}">
 ${cfg.theme.ogImage ? `<meta property="og:image" content="${esc(mediaUrl(cfg.theme.ogImage))}">` : ""}
 <meta name="theme-color" content="${esc(cfg.theme.primary)}">
-${cfg.theme.favicon ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.favicon))}">` : cfg.theme.logo ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.logo))}">` : ""}
+${cfg.theme.favicon && mediaExists(cfg.theme.favicon) ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.favicon))}">` : logo ? `<link rel="icon" href="${esc(mediaUrl(logo))}">` : ""}
 <link rel="stylesheet" href="${asset("/styles.css")}">
 <style>${themeCss()}</style>
 ${jsonLd ? `<script type="application/ld+json"${n}>${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>` : ""}

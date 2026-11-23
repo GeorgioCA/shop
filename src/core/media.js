@@ -24,7 +24,22 @@ export const upload = multer({
 });
 
 export function mediaUrl(filename) {
-  return filename ? `/media/${encodeURIComponent(filename)}` : "";
+  const f = String(filename || "").trim();
+  if (!f) return "";
+  // External URLs pass through untouched; stored filenames are served from /media.
+  if (/^(https?:)?\/\//i.test(f)) return f;
+  return `/media/${encodeURIComponent(f)}`;
+}
+
+// True when an image reference can actually be served: external URLs always,
+// library filenames only while the row exists (deleted or renamed references
+// fall back to the placeholder instead of a broken-image icon). Fields may
+// hold either the media id (m_x) or its filename (m_x.webp).
+export function mediaExists(filename) {
+  const f = String(filename || "").trim();
+  if (!f) return false;
+  if (/^(https?:)?\/\//i.test(f) || f.startsWith("/")) return true;
+  return !!db.prepare("SELECT 1 FROM media WHERE id = ? OR filename = ?").get(f, f);
 }
 
 export const mediaPath = (filename) => path.join(UPLOAD_DIR, path.basename(String(filename || "")));

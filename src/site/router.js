@@ -528,4 +528,27 @@ site.get("/robots.txt", (req, res) => {
   res.type("text/plain").send(`User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /checkout\nDisallow: /order/\nDisallow: /account\nSitemap: ${base}/sitemap.xml\n`);
 });
 
+/* ------------------------------- not found -------------------------------- */
+
+// Branded 404 for public pages. Admin, API and non-HTML requests fall through
+// to their own handlers; anything else the site router cannot answer ends here.
+site.use((req, res, next) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  if (req.path.startsWith("/admin") || req.path.startsWith("/api")) return next();
+  if (!req.accepts("html")) return next();
+  const suggestions = [
+    ["/", "Home"],
+    isEnabled("catalog") ? ["/shop", config().catalog.productsLabel] : null,
+    isEnabled("services") ? ["/services", config().catalog.servicesLabel] : null,
+    isEnabled("bookings") ? ["/book", "Book"] : null,
+    isEnabled("inquiries") ? ["/contact", "Contact"] : null
+  ].filter(Boolean);
+  const body = `${pageHeader({ title: "Page not found", crumbs: [{ label: config().business.name, href: "/" }, { label: "Not found" }] })}
+  <section class="section section-tight"><div class="wrap narrow">
+    <p class="lede">That page does not exist or has moved. Try one of these instead:</p>
+    <div class="chips">${suggestions.map(([href, label]) => `<a class="chip" href="${esc(href)}">${esc(label)}</a>`).join("")}</div>
+  </div></section>`;
+  page(req, res.status(404), body, { title: "Page not found" });
+});
+
 export default site;

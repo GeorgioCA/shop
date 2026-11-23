@@ -4,7 +4,7 @@
 import { db } from "../core/db.js";
 import { config } from "../core/config.js";
 import { esc, money, truncate } from "../core/util.js";
-import { mediaUrl } from "../core/media.js";
+import { mediaUrl, mediaExists } from "../core/media.js";
 import { icon, button, priceBlock, priceOf, ratingStars } from "./components.js";
 import { listProducts } from "../modules/catalog.js";
 import { listServices } from "../modules/services.js";
@@ -48,7 +48,7 @@ export function productCard(p) {
     ? db.prepare("SELECT * FROM products WHERE variant_group = ? AND active = 1 ORDER BY price_cents, name").all(p.variant_group)
     : [p];
   const hasVariants = members.length > 1;
-  const images = [p.image, ...(p.gallery || [])].filter(Boolean);
+  const images = [p.image, ...(p.gallery || [])].filter((i) => mediaExists(i));
   const cheapest = Math.min(...members.map((m) => priceOf(m)));
   const soldOut = p.sold_out || (p.track_stock && p.stock <= 0);
   const art = images.length
@@ -105,7 +105,7 @@ export function serviceCard(s) {
         ? `From ${moneyFmt(s.price_cents)}`
         : moneyFmt(s.price_cents);
   return `<article class="card service-card">
-    ${s.image ? `<div class="card-media"><img class="card-img" src="${esc(mediaUrl(s.image))}" alt="${esc(s.name)}" loading="lazy"></div>` : ""}
+    ${mediaExists(s.image) ? `<div class="card-media"><img class="card-img" src="${esc(mediaUrl(s.image))}" alt="${esc(s.name)}" loading="lazy"></div>` : ""}
     <div class="card-body">
       <h3 class="card-title"><a href="/services/${esc(s.slug)}">${esc(s.name)}</a></h3>
       ${s.short_desc ? `<p class="card-text">${esc(truncate(s.short_desc, 130))}</p>` : ""}
@@ -123,7 +123,7 @@ export function serviceCard(s) {
 const RENDERERS = {
   hero(s) {
     const cfg = config();
-    const img = s.image || cfg.theme.heroImage;
+    const img = [s.image, cfg.theme.heroImage].find((i) => mediaExists(i));
     const art = img
       ? `<div class="hero-art"><img src="${esc(mediaUrl(img))}" alt="" loading="eager"></div>`
       : `<div class="hero-art hero-art-type" aria-hidden="true"><span class="hero-monogram">${esc((cfg.business.name || "S").slice(0, 1))}</span><span class="hero-shape"></span><span class="hero-ring"></span></div>`;
@@ -153,7 +153,7 @@ const RENDERERS = {
           ${s.ctaLabel ? `<p style="margin-top:1.25rem">${button({ label: s.ctaLabel, href: s.ctaUrl || "#", variant: "secondary" })}</p>` : ""}
         </div>
         <div class="split-media">
-          ${s.image ? `<img src="${esc(mediaUrl(s.image))}" alt="" loading="lazy">` : `<div class="media-placeholder" aria-hidden="true">${icon("image", { size: 34 })}</div>`}
+          ${mediaExists(s.image) ? `<img src="${esc(mediaUrl(s.image))}" alt="" loading="lazy">` : `<div class="media-placeholder" aria-hidden="true">${icon("image", { size: 34 })}</div>`}
         </div>
       </div>
     </section>`;
@@ -247,7 +247,7 @@ const RENDERERS = {
   },
 
   gallery(s) {
-    const images = String(s.images || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+    const images = String(s.images || "").split(/\r?\n/).map((x) => x.trim()).filter((x) => mediaExists(x));
     return `<section class="section">
       <div class="wrap">
         ${s.title || s.text ? `<div class="section-head"><div>${s.title ? `<h2>${esc(s.title)}</h2>` : ""}${s.text ? `<p class="section-lede">${esc(s.text)}</p>` : ""}</div></div>` : ""}
@@ -332,7 +332,7 @@ const RENDERERS = {
 
   banner(s) {
     return `<section class="banner-section"><div class="wrap">
-      <div class="banner" ${s.image ? `style="background-image:linear-gradient(90deg,rgba(0,0,0,.55),rgba(0,0,0,.2)),url('${esc(mediaUrl(s.image))}')"` : ""}>
+      <div class="banner" ${mediaExists(s.image) ? `style="background-image:linear-gradient(90deg,rgba(0,0,0,.55),rgba(0,0,0,.2)),url('${esc(mediaUrl(s.image))}')"` : ""}>
         <p>${esc(s.text)}</p>
         ${s.ctaLabel ? button({ label: s.ctaLabel, href: s.ctaUrl || "#", variant: "light" }) : ""}
       </div>

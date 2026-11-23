@@ -5,7 +5,7 @@ import { db } from "../core/db.js";
 import { config, businessAddressLines, socialLinks } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
 import { esc, money, fmtDate, fmtTime, truncate, addDays, localDateStr, dayOfWeek, localParts } from "../core/util.js";
-import { mediaUrl } from "../core/media.js";
+import { mediaUrl, mediaExists } from "../core/media.js";
 import { helcimAvailable } from "../core/payments.js";
 import {
   icon, button, field, priceBlock, priceOf, emptyState, ratingStars, statusBadge, img
@@ -70,10 +70,13 @@ export function renderContentPage(page) {
 export function renderCatalog({ products, categories, activeCategory = "", query = "", total = 0 }) {
   const cfg = config();
   const cats = categories.filter((c) => c.active);
+  const countText = total === 1
+    ? `1 ${cfg.catalog.productSingular.toLowerCase()}`
+    : `${total} items`;
   return `${pageHeader({
     eyebrow: cfg.business.category,
     title: cfg.catalog.productsLabel,
-    text: total ? `${total} ${total === 1 ? cfg.catalog.productSingular.toLowerCase() : cfg.catalog.productsLabel.toLowerCase()}` : "",
+    text: total ? countText : "",
     crumbs: [{ label: b().name, href: "/" }, { label: cfg.catalog.productsLabel }]
   })}
   <section class="section section-tight"><div class="wrap">
@@ -92,7 +95,7 @@ export function renderCatalog({ products, categories, activeCategory = "", query
 
 export function renderProduct({ product, members, reviews, reviewAvg, csrf, related = [], nonce = "" }) {
   const cfg = config();
-  const images = [product.image, ...(product.gallery || [])].filter(Boolean);
+  const images = [product.image, ...(product.gallery || [])].filter((i) => mediaExists(i));
   const soldOut = product.sold_out || (product.track_stock && product.stock <= 0);
   const variants = members.length > 1;
   const attrs = Object.entries(product.attributes || {});
@@ -146,7 +149,8 @@ export function renderProduct({ product, members, reviews, reviewAvg, csrf, rela
       </form>` : `<p>${button({ label: isEnabled("inquiries") ? "Ask about this" : "Contact us", href: "/contact", variant: "primary" })}</p>`}
 
       ${attrs.length ? `<dl class="specs">${attrs.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>` : ""}
-      ${product.description ? `<div class="prose product-desc">${paragraphs(product.description)}</div>` : ""}
+      ${(product.description || "").trim() && (product.description || "").trim() !== (product.short_desc || "").trim()
+        ? `<div class="prose product-desc">${paragraphs(product.description)}</div>` : ""}
     </div>
   </div></section>
 
@@ -208,7 +212,7 @@ export function renderService({ service, related = [] }) {
       <p style="margin-top:1.5rem">${button({ label: isEnabled("bookings") ? "Book this service" : "Ask about this", href: isEnabled("bookings") ? `/book?service=${esc(service.id)}` : "/contact", variant: "primary" })}</p>
     </div>
     <div class="split-media">
-      ${service.image ? `<img src="${esc(mediaUrl(service.image))}" alt="" loading="lazy">` : `<div class="media-placeholder">${icon("calendar", { size: 40 })}</div>`}
+      ${mediaExists(service.image) ? `<img src="${esc(mediaUrl(service.image))}" alt="" loading="lazy">` : `<div class="media-placeholder">${icon("calendar", { size: 40 })}</div>`}
     </div>
   </div></section>
   ${related.length ? `<section class="section section-tint"><div class="wrap"><h2>Other services</h2><div class="grid grid-3">${related.map(serviceCard).join("")}</div></div></section>` : ""}`;
