@@ -297,6 +297,19 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Checkout failed.");
+        if (data.helcim) {
+          // Helcim: the order exists and is unpaid. Open the HelcimPay.js modal;
+          // the SUCCESS message goes to our confirm endpoint, which verifies
+          // the transaction server-side before showing the order as paid.
+          localStorage.removeItem(CART_KEY);
+          const orderToken = data.orderToken;
+          submit.textContent = "Waiting for payment…";
+          await helcimPay(data.helcim.checkoutToken, orderToken, showError, () => {
+            submit.disabled = false;
+            submit.textContent = original;
+          });
+          return;
+        }
         localStorage.removeItem(CART_KEY);
         window.location.href = data.url;
       } catch (err) {
@@ -305,6 +318,83 @@
         submit.textContent = original;
       }
     });
+
+    // HelcimPay.js: load their script, render the modal iframe and relay the
+    // payment result to the server for verification.
+    let helcimScriptLoading = null;
+    function helcimScript() {
+      if (window.appendHelcimPayIframe) return Promise.resolve();
+      if (!helcimScriptLoading) {
+        helcimScriptLoading = new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://secure.helcim.app/helcim-pay/services/start.js";
+          s.onload = resolve;
+          s.onerror = () => { helcimScriptLoading = null; reject(new Error("Could not load the payment window. Check your connection and try again.")); };
+          document.head.appendChild(s);
+        });
+      }
+      return helcimScriptLoading;
+    }
+
+    async function helcimPay(checkoutToken, orderToken, showError, reset) {
+      try {
+        await helcimScript();
+      } catch (err) { showError(err.message); reset(); return; }
+
+      const cleanup = () => { try { if (window.removeHelcimPayIframe) window.removeHelcimPayIframe(); } catch { /* already gone */ } };
+      let settled = false;
+
+      await new Promise((resolve) => {
+        const handler = async (event) => {
+          // Only accept messages from Helcim's checkout origin.
+          if (!/^https:\/\/([a-z0-9-]+\.)*helcim\.app$/.test(String(event.origin))) return;
+          if (!event.data || event.data.eventName !== "helcim-pay-js-" + checkoutToken) return;
+          if (settled) return;
+
+          if (event.data.eventStatus === "HIDE") {
+            // Modal or confirmation screen closed: no more messages will come.
+            settled = true;
+            window.removeEventListener("message", handler);
+            cleanup();
+            resolve();
+            return;
+          }
+          if (event.data.eventStatus === "ABORTED") {
+            settled = true;
+            window.removeEventListener("message", handler);
+            cleanup();
+            const message = typeof event.data.eventMessage === "string"
+              ? event.data.eventMessage.replace(/^HelcimPay\.js transaction failed - ?/, "")
+              : "The payment was declined or cancelled.";
+            showError(message);
+            reset();
+            resolve();
+            return;
+          }
+          if (event.data.eventStatus === "SUCCESS") {
+            settled = true;
+            window.removeEventListener("message", handler);
+            cleanup();
+            try {
+              const res = await fetch("/api/helcim/confirm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
+                body: JSON.stringify({ orderToken, response: event.data.eventMessage })
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error || "We could not verify this payment.");
+              window.location.href = data.url;
+            } catch (err) {
+              showError(err.message);
+              reset();
+            }
+            resolve();
+          }
+        };
+        window.addEventListener("message", handler);
+        window.appendHelcimPayIframe(checkoutToken);
+      });
+    }
 
     document.addEventListener("cart:change", refresh);
     const deliveryRadio = form.querySelector('input[name="fulfilment"][value="delivery"]');

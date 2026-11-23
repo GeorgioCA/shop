@@ -7,8 +7,8 @@ import { attachUser, sameOrigin } from "./core/auth.js";
 import { requestId, notFound, errorHandler, noStore } from "./core/http.js";
 import { publicDir } from "./core/assets.js";
 import { UPLOAD_DIR } from "./core/media.js";
-import { constructEvent, stripeConfigured } from "./core/payments.js";
-import { getOrder, markPaid } from "./modules/orders.js";
+import { constructEvent, stripeConfigured, helcimAvailable, helcimConfigured, verifyHelcimWebhook } from "./core/payments.js";
+import { getOrder, markPaid, confirmHelcimTransaction } from "./modules/orders.js";
 import { sendOrderConfirmation } from "./core/mail.js";
 import { site } from "./site/router.js";
 import { admin, firstRun } from "./admin/router.js";
@@ -51,10 +51,15 @@ export function createApp() {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    // The HelcimPay.js modal needs its script and iframe from Helcim's origin,
+    // on the checkout page only.
+    const helcimCheckout = helcimAvailable() && req.path === "/checkout";
     res.setHeader(
       "Content-Security-Policy",
       `default-src 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; ` +
-        `script-src 'self' 'nonce-${res.locals.nonce}'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
+        `script-src 'self' 'nonce-${res.locals.nonce}'${helcimCheckout ? " https://secure.helcim.app" : ""}; ` +
+        `connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` +
+        `${helcimCheckout ? "; frame-src https://secure.helcim.app" : ""}`
     );
     next();
   });
@@ -85,6 +90,34 @@ export function createApp() {
       res.json({ received: true });
     } catch (err) {
       console.error("[stripe] handler:", err);
+      res.status(500).json({ error: "Webhook handler failed." });
+    }
+  });
+
+  // Helcim needs the raw body for signature verification, like Stripe. The
+  // delivery URL must not contain "Helcim" (Helcim's rule), hence card-webhook.
+  app.post("/api/card-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+    if (!helcimConfigured() || !process.env.HELCIM_WEBHOOK_VERIFIER) {
+      return res.status(503).send("Helcim webhook is not configured.");
+    }
+    let valid = false;
+    try {
+      valid = verifyHelcimWebhook({ headers: req.headers, rawBody: req.body.toString("utf8") });
+    } catch (err) {
+      console.error("[helcim] webhook config:", err.message);
+      return res.status(503).send("Helcim webhook is not configured.");
+    }
+    if (!valid) return res.status(401).send("Invalid webhook signature.");
+    try {
+      const event = JSON.parse(req.body.toString("utf8"));
+      if (event?.type === "cardTransaction" && event?.id) {
+        // Await the confirmation so a failed read-back gets a 5xx and Helcim's
+        // retry schedule tries again; markPaid is idempotent.
+        await confirmHelcimTransaction(event.id);
+      }
+      res.json({ received: true });
+    } catch (err) {
+      console.error("[helcim] webhook handler:", err);
       res.status(500).json({ error: "Webhook handler failed." });
     }
   });

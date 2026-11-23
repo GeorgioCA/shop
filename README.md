@@ -64,7 +64,7 @@ Everything after step 1 happens in `/admin`. No source edits and no redeploy.
 | Product catalog | Products, categories, variants, attributes, images | — |
 | Service catalog | Services, durations, fixed/from/quote pricing | — |
 | Online ordering | Cart, checkout, orders, fulfilment | Product catalog |
-| Card payments | Stripe Checkout + webhook | Online ordering |
+| Card payments | Stripe Checkout or Helcim Pay (CAD/USD), signed webhooks | Online ordering |
 | Discounts | Percentage/fixed codes, limits, expiry | Online ordering |
 | Stock tracking | Counted stock, sold-out, low-stock alerts | Product catalog |
 | Delivery | Delivery option, fees, free-over threshold, area | Online ordering |

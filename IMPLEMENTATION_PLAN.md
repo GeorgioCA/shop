@@ -250,7 +250,7 @@ Dependencies: only the source stack (`express`, `multer`, `sharp`, `stripe`) plu
 | Products, categories, variants, attributes, CSV | Done |
 | Services, staff, bookings, closures | Done |
 | Cart, server re-pricing, checkout, orders, discounts, tax, delivery | Done |
-| Stripe adapter, webhook, offline methods, demo mode | Done |
+| Stripe and Helcim adapters, signed webhooks, offline methods, demo mode | Done |
 | Customers, accounts, inquiries, reviews, newsletter, loyalty | Done |
 | Public site, SEO, sitemap, responsive CSS | Done |
 | 19 presets + custom | Done |

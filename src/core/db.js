@@ -172,6 +172,7 @@ db.exec(`
     total_cents     INTEGER NOT NULL DEFAULT 0,
     currency        TEXT NOT NULL DEFAULT 'CAD',
     stripe_session  TEXT,
+    payment_reference TEXT,
     paid_at         TEXT
   );
 
@@ -379,6 +380,13 @@ if (currentVersion < 2) {
   addColumn("customers", "verification_expires", "TEXT");
   addColumn("customers", "pending_password_hash", "TEXT");
   db.exec("PRAGMA user_version = 2");
+}
+
+if (currentVersion < 3) {
+  // v3: processor-agnostic payment reference (Helcim transaction id; Stripe
+  // keeps its dedicated stripe_session column).
+  addColumn("orders", "payment_reference", "TEXT");
+  db.exec("PRAGMA user_version = 3");
 }
 
 export const schemaVersion = () => db.prepare("PRAGMA user_version").get().user_version;

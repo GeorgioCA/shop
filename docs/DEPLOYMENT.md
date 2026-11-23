@@ -20,6 +20,9 @@ The platform is one Node process with one SQLite database and one uploads direct
 | `STRIPE_SECRET_KEY` | no | Enables Stripe Checkout once the Card payments module is on. |
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | Signing secret for `/api/stripe/webhook`. |
 | `STRIPE_AUTOMATIC_TAX` | no | `1` enables Stripe Tax on sessions. |
+| `HELCIM_API_TOKEN` | no | Card payments through Helcim (CAD/USD). Requires a Helcim API Access Configuration with HelcimPay checkout enabled and the checkout URL whitelisted. |
+| `HELCIM_WEBHOOK_VERIFIER` | with Helcim | Webhook Verifier Token for `/api/card-webhook` (Helcim rejects delivery URLs containing "Helcim"). |
+| `HELCIM_API_URL` | no | Override the Helcim API endpoint (developer test accounts, proxies, tests). |
 | `RESEND_API_KEY` | no | Transactional email. Without it, mail is logged as skipped and **customer account registration is disabled** (sign-up is confirmed with an emailed link). |
 | `RESEND_API_URL` | no | Override the Resend API endpoint (self-hosted, proxied or test installs). |
 | `EMAIL_FROM` | no | Fallback sender; Settings → Email overrides it. |

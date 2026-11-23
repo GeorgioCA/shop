@@ -128,7 +128,16 @@ Pages store sections as ordered JSON (`[{ type, id, ...fields }]`). Reordering i
 - Output: every database or user value is escaped at the point of interpolation; the few trusted fragments are constructed by our own components.
 - Headers: CSP (self only, per-request script nonces), HSTS when the request is secure, frame-deny, referrer policy, permissions policy.
 
-The admin fails closed if Stripe/Resend are missing — those degrade in capability, not into errors. The store works with no Stripe key (offline methods) and no email key (logged, skipped), except that customer account registration needs the email key because sign-up is confirmed by a emailed link.
+The admin fails closed if Stripe/Helcim/Resend are missing — those degrade in capability, not into errors. The store works with no Stripe or Helcim key (offline methods) and no email key (logged, skipped), except that customer account registration needs the email key because sign-up is confirmed by a emailed link.
+
+### Payment processors
+
+Two card processors share one adapter layer in `core/payments.js`; the checkout simply lists the methods that are available:
+
+- **Stripe** — redirect to Stripe Checkout; the signed webhook (`/api/stripe/webhook`) marks orders paid. Stripe handles any supported currency.
+- **Helcim** (CAD/USD only) — the server creates a HelcimPay.js checkout session; the modal renders in an iframe from `secure.helcim.app` (allowed in the CSP on `/checkout` only). The browser relays the payment result to `/api/helcim/confirm`, but the relay is never trusted: the transaction is read back from the Helcim API and must match the order's total, currency and invoice number. A signed webhook (`/api/card-webhook` — the URL may not contain "Helcim", Helcim's rule) covers closed-tab cases and verifies with HMAC-SHA256 over `webhook-id.webhook-timestamp.body`, keyed by the base64-decoded verifier token.
+
+Both paths converge on `markPaid`, which is idempotent and stores the processor reference on the order row.
 
 ## Presets
 
@@ -145,7 +154,7 @@ There is no "industry mode" in the runtime. After applying, the preset leaves no
 ## Request lifecycle
 
 1. `requestId`, security headers, cookie parsing.
-2. Stripe webhook (raw body) before JSON parsing.
+2. Stripe and Helcim webhooks (raw body) before JSON parsing.
 3. Body parsing, static files, `/media`.
 4. Global `attachUser`: verifies the admin session, loads the customer session, issues the CSRF cookie.
 5. `/setup` (first run only), public site, then `/admin` routers in the order shell → commerce → content.

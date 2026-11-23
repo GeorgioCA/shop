@@ -12,6 +12,10 @@ services:
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_AUTOMATIC_TAX: ${STRIPE_AUTOMATIC_TAX:-0}
+      # Helcim card payments (CAD/USD) — alternative or addition to Stripe.
+      HELCIM_API_TOKEN: ${HELCIM_API_TOKEN:-}
+      HELCIM_WEBHOOK_VERIFIER: ${HELCIM_WEBHOOK_VERIFIER:-}
+      HELCIM_API_URL: ${HELCIM_API_URL:-}
       # Email (optional). Without a key, messages are logged and skipped.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}

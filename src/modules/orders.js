@@ -11,6 +11,7 @@ import { getProduct } from "./catalog.js";
 import { evaluateDiscount, useDiscount } from "./discounts.js";
 import { upsertCustomer } from "./customers.js";
 import { awardPoints, revokePointsForOrder } from "./loyalty.js";
+import { helcimPaymentMatches, helcimTransaction } from "../core/payments.js";
 
 export const ORDER_STATUSES = ["pending", "confirmed", "ready", "completed", "cancelled"];
 export const PAYMENT_STATUSES = ["unpaid", "paid", "refunded"];
@@ -153,7 +154,7 @@ export function createOrder(input) {
       address: str(input.address, 400),
       notes: str(input.notes, 1000),
       admin_notes: "",
-      payment_method: input.payment_method === "stripe" ? "stripe" : "offline",
+      payment_method: ["stripe", "helcim"].includes(input.payment_method) ? input.payment_method : "offline",
       payment_status: input.paid ? "paid" : "unpaid",
       status: input.paid ? "confirmed" : "pending",
       subtotal_cents: q.subtotalCents,
@@ -266,15 +267,15 @@ export function setOrderStatus(orderId, status) {
   return getOrder(order.id);
 }
 
-export function markPaid(orderId, { stripeSession = null } = {}) {
+export function markPaid(orderId, { stripeSession = null, reference = null } = {}) {
   const order = getOrder(orderId);
   if (!order) throw new Error("Order not found.");
   if (order.payment_status === "paid") return order;
   // A cancelled order can still be paid (late webhook, pay-at-door after
   // cancellation); money arrived, so it becomes confirmed rather than staying cancelled.
   db.prepare(
-    "UPDATE orders SET payment_status = 'paid', paid_at = ?, status = CASE WHEN status IN ('pending','cancelled') THEN 'confirmed' ELSE status END, stripe_session = COALESCE(?, stripe_session), updated_at = ? WHERE id = ?"
-  ).run(nowIso(), stripeSession, nowIso(), order.id);
+    "UPDATE orders SET payment_status = 'paid', paid_at = ?, status = CASE WHEN status IN ('pending','cancelled') THEN 'confirmed' ELSE status END, stripe_session = COALESCE(?, stripe_session), payment_reference = COALESCE(?, payment_reference), updated_at = ? WHERE id = ?"
+  ).run(nowIso(), stripeSession, reference, nowIso(), order.id);
   if (order.customer_id) awardPoints(order.customer_id, order.total_cents, order.id);
   return getOrder(order.id);
 }
@@ -291,10 +292,29 @@ export function setOrderNotes(orderId, { admin_notes }) {
   db.prepare("UPDATE orders SET admin_notes = ?, updated_at = ? WHERE id = ?").run(str(admin_notes, 4000), nowIso(), orderId);
 }
 
-export function expireStalePending(days = 2) {
-  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
+/**
+ * Webhook-driven Helcim confirmation. The cardTransaction event carries only
+ * a transaction id; the authoritative record is read back from Helcim and
+ * bound to the order through the invoice number recorded at checkout.
+ * markPaid is idempotent, so Helcim's retry schedule is safe.
+ */
+export async function confirmHelcimTransaction(transactionId) {
+  const transaction = await helcimTransaction(transactionId);
+  if (String(transaction?.status).toUpperCase() !== "APPROVED") return null;
+  const order = transaction?.invoiceNumber ? getOrder(transaction.invoiceNumber) : null;
+  if (!order || order.payment_method !== "helcim") return null;
+  if (!helcimPaymentMatches(order, transaction)) {
+    console.error(`[helcim] webhook mismatch for ${order.number}: transaction ${transactionId}`);
+    return null;
+  }
+  if (order.payment_status === "paid") return getOrder(order.id);
+  const paid = markPaid(order.id, { reference: String(transaction.transactionId) });
+  return paid;
+}
+
+export function expireStalePending(days = 2) {  const cutoff = new Date(Date.now() - days * 86400_000).toISOString();
   const stale = db.prepare(
-    "SELECT * FROM orders WHERE status = 'pending' AND payment_status = 'unpaid' AND payment_method = 'stripe' AND created_at < ?"
+    "SELECT * FROM orders WHERE status = 'pending' AND payment_status = 'unpaid' AND payment_method IN ('stripe','helcim') AND created_at < ?"
   ).all(cutoff);
   for (const order of stale) setOrderStatus(order.id, "cancelled");
   return stale.length;

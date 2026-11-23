@@ -8,12 +8,12 @@ import { signToken, verifyToken, readCookie, cookieOptions, clearSessionCookie, 
 import { asyncHandler, rateLimit, setFlash, popFlash } from "../core/http.js";
 import { esc, slugify, localDateStr, addDays, fmtDate, fmtTime, money } from "../core/util.js";
 import { mediaPath } from "../core/media.js";
-import { anyOnlineMode, createCheckoutSession, demoPayments, onlinePaymentsAvailable } from "../core/payments.js";
+import { anyOnlineMode, createCheckoutSession, createHelcimSession, demoPayments, helcimAvailable, helcimPaymentMatches, helcimTransaction, onlinePaymentsAvailable } from "../core/payments.js";
 import { mailConfigured, sendCustomerVerification, sendOrderConfirmation, sendBookingConfirmation, sendInquiryAck, sendOwnerAlert } from "../core/mail.js";
 import { getPage, homePage, publishedPages, sitemapEntries } from "../modules/content.js";
 import { listProducts, listCategories, getProduct, productStats } from "../modules/catalog.js";
 import { listServices, getService } from "../modules/services.js";
-import { createOrder, quote, getOrderByToken } from "../modules/orders.js";
+import { createOrder, quote, getOrderByToken, markPaid } from "../modules/orders.js";
 import { evaluateDiscount } from "../modules/discounts.js";
 import { createBooking, getBookingByToken, availabilityWindow, availability } from "../modules/bookings.js";
 import { createInquiry } from "../modules/inquiries.js";
@@ -281,8 +281,9 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
   if (!verifyCsrf(req)) return res.status(403).json({ error: "Session expired. Refresh the page and try again." });
   const body = req.body || {};
   const cfg = config();
-  const method = body.payment_method === "stripe" ? "stripe" : "offline";
+  const method = body.payment_method === "stripe" ? "stripe" : body.payment_method === "helcim" ? "helcim" : "offline";
   if (method === "stripe" && !anyOnlineMode()) return res.status(400).json({ error: "Card payment is not available." });
+  if (method === "helcim" && !helcimAvailable()) return res.status(400).json({ error: "Card payment is not available." });
   if (method === "offline" && !cfg.commerce.offlinePayments) return res.status(400).json({ error: "Choose a payment method." });
 
   if (!String(body.name || "").trim()) return res.status(400).json({ error: "Enter your name." });
@@ -319,6 +320,17 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
       return res.json({ url: session.url });
     }
 
+    if (method === "helcim" && helcimAvailable()) {
+      const order = createOrder({
+        ...body, items: cart, payment_method: "helcim", paid: false,
+        customer: req.customer,
+        tipCents: Number(body.tip_cents) || 0,
+        pointsToUse: body.use_points ? customerPoints(req.customer?.id) : 0
+      });
+      const session = await createHelcimSession({ order, items: order.items });
+      return res.json({ helcim: { checkoutToken: session.checkoutToken }, orderToken: order.token });
+    }
+
     const demo = method === "stripe" && demoPayments();
     const order = createOrder({
       ...body, items: cart, payment_method: method === "stripe" ? "stripe" : "offline",
@@ -334,6 +346,44 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+}));
+
+site.post("/api/helcim/confirm", rateLimit({ windowMs: 60_000, max: 10, message: "Too many confirmation attempts. Please wait a minute." }), asyncHandler(async (req, res) => {
+  if (!helcimAvailable()) return res.status(404).json({ error: "Not available" });
+  if (!verifyCsrf(req)) return res.status(403).json({ error: "Session expired. Refresh the page and try again." });
+  const order = getOrderByToken(String(req.body?.orderToken || ""));
+  if (!order || order.payment_method !== "helcim") return res.status(400).json({ error: "Order not found." });
+  if (order.payment_status === "paid") {
+    return res.json({ url: `/order/${order.token}?paid=1` });
+  }
+
+  // The browser relays the HelcimPay.js SUCCESS message. It is never trusted:
+  // the transaction is read back from the Helcim API and must match this
+  // order's total, currency and invoice number before anything is marked paid.
+  let payload = req.body?.response;
+  if (typeof payload === "string") {
+    try { payload = JSON.parse(payload); } catch { payload = null; }
+  }
+  const transactionId = payload?.data?.transactionId;
+  if (!transactionId) return res.status(400).json({ error: "The payment response was not readable. Contact us before paying again." });
+
+  let transaction;
+  try {
+    transaction = await helcimTransaction(transactionId);
+  } catch (err) {
+    console.error(`[helcim] read-back ${transactionId}:`, err.message);
+    return res.status(400).json({ error: "We could not verify this payment yet. Contact us before paying again." });
+  }
+  if (!helcimPaymentMatches(order, transaction)) {
+    console.error(`[helcim] mismatch for ${order.number}: transaction ${transactionId} for ${transaction?.amount} ${transaction?.currency} status ${transaction?.status}`);
+    return res.status(400).json({ error: "This payment does not match your order. Contact us before paying again." });
+  }
+
+  const paid = markPaid(order.id, { reference: String(transaction.transactionId) });
+  const origin = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+  sendOrderConfirmation(paid, paid.items, `${origin}/order/${paid.token}`);
+  sendOwnerAlert("New order (card)", [`${paid.number} · ${paid.name}`, `${paid.items.length} line(s)`, moneyFmt(paid.total_cents)], `${origin}/admin/orders/${paid.number}`);
+  res.json({ url: `/order/${paid.token}?paid=1` });
 }));
 
 site.get("/order/:token", (req, res, next) => {

@@ -6,6 +6,7 @@ import { config, businessAddressLines, socialLinks } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
 import { esc, money, fmtDate, fmtTime, truncate, addDays, localDateStr, dayOfWeek, localParts } from "../core/util.js";
 import { mediaUrl } from "../core/media.js";
+import { helcimAvailable } from "../core/payments.js";
 import {
   icon, button, field, priceBlock, priceOf, emptyState, ratingStars, statusBadge, img
 } from "./components.js";
@@ -294,6 +295,7 @@ export function renderCheckout({ csrf, customer = null, points = null }) {
   const c = cfg.commerce;
   const methods = [];
   if (c.onlinePayments && isEnabled("payments")) methods.push({ value: "stripe", label: "Pay by card", help: "Secure checkout. You will be redirected." });
+  if (helcimAvailable()) methods.push({ value: "helcim", label: "Pay by card (Helcim)", help: "Secure card payment. A payment window will open over this page." });
   if (c.offlinePayments) methods.push({ value: "offline", label: c.offlineLabel || "Pay in person", help: c.offlineInstructions });
 
   return `${pageHeader({ title: "Checkout", crumbs: [{ label: cfg.business.name, href: "/" }, { label: "Checkout" }] })}
@@ -400,7 +402,7 @@ export function renderOrder({ order, items, justPaid = false }) {
           ${[cfg.business.address1, cfg.business.city].filter(Boolean).length ? `<p class="muted">${esc([cfg.business.address1, cfg.business.city].filter(Boolean).join(", "))}</p>` : ""}
         </div>
         <div><h3>Payment</h3>
-          <p>${order.payment_status === "paid" ? "Paid in full." : order.payment_method === "stripe" ? "Card payment pending." : `${esc(cfg.commerce.offlineLabel)} — ${esc(cfg.commerce.offlineInstructions)}`}</p>
+          <p>${order.payment_status === "paid" ? "Paid in full." : ["stripe", "helcim"].includes(order.payment_method) ? "Card payment pending." : `${esc(cfg.commerce.offlineLabel)} — ${esc(cfg.commerce.offlineInstructions)}`}</p>
         </div>
       </div>
       <p class="fine">Keep this link to check your order. Questions? <a href="mailto:${esc(cfg.business.email)}">${esc(cfg.business.email)}</a></p>

@@ -91,9 +91,11 @@ export function renderOrderDetail({ order, items, csrf, flash = null, mailResult
       <section class="card"><div class="card-pad">
         <h2>Payment</h2>
         <p class="muted">${esc(order.payment_method)} · ${esc(order.payment_status)}${order.paid_at ? ` · ${esc(fmtDate(order.paid_at, tz))}` : ""}</p>
+        ${order.payment_reference ? `<p class="fine">Processor reference <code>${esc(order.payment_reference)}</code></p>` : ""}
+        ${order.stripe_session ? `<p class="fine">Stripe session <code>${esc(order.stripe_session)}</code></p>` : ""}
         <div class="stack">
           ${order.payment_status !== "paid" ? `<form method="post" action="/admin/orders/${esc(order.number)}/paid">${csrfField(csrf)}<button class="btn btn-secondary btn-block" type="submit">Mark paid</button></form>` : ""}
-          ${order.payment_status === "paid" ? `<form method="post" action="/admin/orders/${esc(order.number)}/refunded" data-confirm="Mark as refunded? Issue the refund in Stripe separately.">${csrfField(csrf)}<button class="btn btn-ghost btn-block text-danger" type="submit">Mark refunded</button></form>` : ""}
+          ${order.payment_status === "paid" ? `<form method="post" action="/admin/orders/${esc(order.number)}/refunded" data-confirm="Mark as refunded? Issue the refund in the processor's dashboard (Stripe or Helcim) separately.">${csrfField(csrf)}<button class="btn btn-ghost btn-block text-danger" type="submit">Mark refunded</button></form>` : ""}
           <form method="post" action="/admin/orders/${esc(order.number)}/email">${csrfField(csrf)}<button class="btn btn-ghost btn-block" type="submit">${icon("mail", { size: 16 })} Resend confirmation</button></form>
         </div>
       </div></section>

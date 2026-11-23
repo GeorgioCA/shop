@@ -45,11 +45,11 @@ export const MODULES = [
   {
     key: "payments",
     name: "Card payments",
-    description: "Stripe Checkout for online card payment. Offline methods work without it.",
+    description: "Online card payments through Stripe Checkout or Helcim (Canadian processor). Offline methods work without either.",
     category: "Selling",
     requires: ["commerce"],
     defaultEnabled: false,
-    features: ["Stripe Checkout", "Webhook confirmation", "Paid / unpaid states"]
+    features: ["Stripe Checkout", "Helcim Pay (CAD/USD)", "Signed webhooks", "Paid / unpaid states"]
   },
   {
     key: "promotions",
