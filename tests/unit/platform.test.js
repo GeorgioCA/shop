@@ -31,6 +31,48 @@ test("money and input parsing never produce floats", () => {
   assert.equal(util.centsInput(1250), "12.50");
 });
 
+test("urlOk rejects executable and protocol-relative schemes", () => {
+  assert.ok(util.urlOk("https://example.com"));
+  assert.ok(util.urlOk("http://example.com"));
+  assert.ok(util.urlOk("mailto:hi@example.com"));
+  assert.ok(util.urlOk("tel:+14035550111"));
+  assert.ok(util.urlOk("/shop"));
+  assert.ok(util.urlOk("/p/about"));
+  assert.ok(!util.urlOk("javascript:alert(1)"));
+  assert.ok(!util.urlOk("JAVASCRIPT:x"));
+  assert.ok(!util.urlOk("data:text/html,<script>"));
+  assert.ok(!util.urlOk("vbscript:x"));
+  assert.ok(!util.urlOk("//evil.com"));
+  assert.ok(!util.urlOk("/\\evil.com"));
+  assert.ok(util.urlOk("  https://ok.com  ")); // surrounding whitespace is trimmed
+});
+
+test("safeNext rejects backslash-form open redirects", () => {
+  assert.equal(util.safeNext("/\\evil.com"), "/admin");
+  assert.equal(util.safeNext("//evil.com"), "/admin");
+  assert.equal(util.safeNext("https://evil.com"), "/admin");
+  assert.equal(util.safeNext("/admin/orders"), "/admin/orders");
+  assert.equal(util.safeNext(undefined), "/admin");
+});
+
+test("csvEscape neutralises formula injection", () => {
+  assert.equal(util.csvEscape("=HYPERLINK(\"http://e\",\"x\")"), '"\'=HYPERLINK(""http://e"",""x"")"');
+  assert.equal(util.csvEscape("@SUM(1)"), "'@SUM(1)");
+  assert.equal(util.csvEscape("+1+1"), "'+1+1");
+  assert.equal(util.csvEscape("-1"), "'-1");
+  assert.equal(util.csvEscape("plain"), "plain");
+  assert.equal(util.csvEscape("a,b"), '"a,b"');
+});
+
+test("tokens and ids come from a cryptographic source", () => {
+  const a = util.id("p_");
+  const b = util.id("p_");
+  assert.notEqual(a, b);
+  assert.match(a, /^p_[A-Za-z0-9_-]+$/);
+  assert.ok(util.randToken(12).length >= 16);
+  assert.ok(!/^[0-9a-f]+$/.test(util.randToken(12))); // base64url, not plain hex
+});
+
 test("timezone conversion handles standard time, daylight time and DST edges", () => {
   const tz = "America/Edmonton";
   assert.equal(util.zonedToUtc(2026, 1, 15, 9, 0, tz).toISOString(), "2026-01-15T16:00:00.000Z"); // MST
@@ -154,4 +196,30 @@ test("booking availability respects hours, lead time and closures", async () => 
   // 09:00-10:00 with a 30 min buffer, next slot may start at 09:30 only if it does not overlap.
   const overlapping = day.slots.filter((s) => s.available);
   assert.ok(overlapping.length >= 1);
+});
+
+test("a taken slot cannot be booked twice", async () => {
+  const { createBooking } = await import("../../src/modules/bookings.js");
+  const { saveService } = await import("../../src/modules/services.js");
+  saveConfig("hours", { hours: { sun: { closed: false, open: "13:00", close: "15:00" } } });
+  saveConfig("bookings", { slotIntervalMin: 30, leadHours: 0, maxAdvanceDays: 365, confirmationMode: "auto" });
+  const svc = saveService({ name: "Single Slot", price: "40", duration_min: 60, capacity: 1, active: 1 });
+  const slot = availability(svc, "2027-06-13").slots.find((s) => s.available); // a Sunday
+  assert.ok(slot, "a slot exists");
+
+  const first = createBooking({
+    service_id: svc.id, name: "First Client", email: "first@example.test",
+    starts_at: slot.start, phone: "4035550111"
+  });
+  assert.ok(first.number);
+
+  // The slot's availability was consumed; a second request (concurrent or not)
+  // must be refused instead of double-booking the calendar.
+  assert.throws(
+    () => createBooking({
+      service_id: svc.id, name: "Second Client", email: "second@example.test",
+      starts_at: slot.start, phone: "4035550111"
+    }),
+    /no longer available/
+  );
 });

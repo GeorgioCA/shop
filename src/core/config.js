@@ -7,7 +7,7 @@
 //  - Unknown keys and invalid values are rejected, never silently stored.
 
 import { db, settingRow, writeSetting } from "./db.js";
-import { bool, emailOk, int, num, parseCents, str, nowIso } from "./util.js";
+import { bool, emailOk, int, num, parseCents, str, nowIso, urlOk } from "./util.js";
 
 export const DAYS = [
   ["mon", "Monday"],
@@ -204,8 +204,6 @@ export const SCHEMA = {
 
 /* -------------------------------- coercion -------------------------------- */
 
-const isWebUrl = (v) => /^(https?:\/\/|mailto:|tel:|\/)/i.test(v);
-
 function coerceOne(field, value, key) {
   switch (field.type) {
     case "text":
@@ -218,7 +216,9 @@ function coerceOne(field, value, key) {
     }
     case "url": {
       const v = str(value, field.max ?? 500);
-      if (v && !isWebUrl(v)) throw new Error(`${field.label} must start with http://, https:// or /.`);
+      // urlOk rejects executable and protocol-relative schemes, so a setting
+      // can never render as javascript: or //evil.com.
+      if (v && !urlOk(v)) throw new Error(`${field.label} must start with http://, https:// or /.`);
       return v;
     }
     case "color": {

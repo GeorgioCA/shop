@@ -99,11 +99,11 @@ export const MODULES = [
   {
     key: "accounts",
     name: "Customer accounts",
-    description: "Customer sign-in, order history and saved details.",
+    description: "Email-verified customer sign-in, order history and saved details.",
     category: "Growth",
     requires: [],
     defaultEnabled: false,
-    features: ["Customer login", "Order history", "Booking history"]
+    features: ["Email-verified sign-up", "Customer login", "Order history", "Booking history"]
   },
   {
     key: "reviews",

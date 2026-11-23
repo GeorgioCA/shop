@@ -1,6 +1,8 @@
 // Small, dependency-free helpers shared by every layer.
 // Money is always integer cents. Dates are stored as ISO 8601 UTC strings.
 
+import crypto from "node:crypto";
+
 export const esc = (v) =>
   String(v ?? "")
     .replace(/&/g, "&amp;")
@@ -65,8 +67,12 @@ export function uniqueSlug(base, exists) {
   return `${root}-${Date.now()}`;
 }
 
-export const id = (prefix = "") =>
-  `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+// Unpredictable identifiers. Everything used as a public capability (order and
+// booking tokens) or a collision guard must come from a CSPRNG, never Math.random.
+export const id = (prefix = "") => `${prefix}${crypto.randomBytes(9).toString("base64url")}`;
+
+// URL-safe random string for capability tokens (order/booking links).
+export const randToken = (bytes = 12) => crypto.randomBytes(bytes).toString("base64url");
 
 export const nowIso = () => new Date().toISOString();
 
@@ -108,6 +114,19 @@ export function phoneOk(value) {
   return digits.length >= 7 && digits.length <= 15;
 }
 
+// Links that end up in href attributes must not be executable schemes. Allows
+// http(s), mailto, tel and site-relative paths; rejects protocol-relative
+// ("//host"), backslash forms and anything like javascript:, data:, vbscript:.
+export function urlOk(value) {
+  const s = String(value ?? "").trim();
+  if (!s || /[\u0000-\u001f\u007f]/.test(s)) return false;
+  if (/^https?:\/\//i.test(s)) return true;
+  if (/^(mailto:|tel:)/i.test(s)) return true;
+  // Site-relative: exactly one leading "/" that is not followed by "/" or "\".
+  if (/^\/([\/\\]|$)/.test(s)) return false;
+  return s.startsWith("/");
+}
+
 export function truncate(text, n = 160) {
   const s = String(text ?? "").replace(/\s+/g, " ").trim();
   return s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…`;
@@ -121,7 +140,10 @@ export function listFromLines(value) {
 }
 
 export function csvEscape(v) {
-  const s = String(v ?? "");
+  let s = String(v ?? "");
+  // Neutralise spreadsheet formula injection: leading =, +, -, @ or tab/CR
+  // would execute as a formula or macro when opened in Excel.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -286,7 +308,9 @@ export function qs(params) {
 
 export function safeNext(value, fallback = "/admin") {
   const s = String(value ?? "");
-  return s.startsWith("/") && !s.startsWith("//") ? s : fallback;
+  // Reject anything that is not a plain site-relative path: "//host" is a
+  // protocol-relative redirect and "/\host" is normalised to it by browsers.
+  return s.startsWith("/") && !/^\/[\/\\]/.test(s) ? s : fallback;
 }
 
 export function chunk(arr, n) {

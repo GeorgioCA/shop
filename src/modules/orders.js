@@ -1,14 +1,16 @@
 // Orders: server-side pricing, append-only snapshots, stock reservation and
 // status transitions. The client cart is a wish list; this file decides money.
 
+import crypto from "node:crypto";
 import { db, insert, tx, jsonParse } from "../core/db.js";
 import { config, taxRate } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
-import { nowIso, str, int, paginate, money } from "../core/util.js";
+import { loyaltySettings } from "./loyalty.js";
+import { nowIso, str, int, paginate, money, randToken, localDateStr, zonedToUtc } from "../core/util.js";
 import { getProduct } from "./catalog.js";
 import { evaluateDiscount, useDiscount } from "./discounts.js";
 import { upsertCustomer } from "./customers.js";
-import { awardPoints } from "./loyalty.js";
+import { awardPoints, revokePointsForOrder } from "./loyalty.js";
 
 export const ORDER_STATUSES = ["pending", "confirmed", "ready", "completed", "cancelled"];
 export const PAYMENT_STATUSES = ["unpaid", "paid", "refunded"];
@@ -74,11 +76,14 @@ export function quote({ items = [], fulfilment = "pickup", tipCents = 0, code = 
   let pointsUsed = 0;
   let pointsCents = 0;
   if (pointsToUse && customer && isEnabled("loyalty")) {
+    // Both knobs come from the loyalty module config; without a cap a customer
+    // could redeem against the whole subtotal regardless of the admin's limit.
+    const { redeemCentsPer100, maxRedeemPercent } = loyaltySettings();
+    const per100 = Math.max(1, Math.round(redeemCentsPer100 || 500));
     const available = db.prepare("SELECT COALESCE(SUM(points),0) AS n FROM loyalty_ledger WHERE customer_id = ?").get(customer.id).n;
-    pointsUsed = Math.min(int(pointsToUse, { min: 0, fallback: 0 }), available);
-    pointsCents = Math.min(subtotal - discountCents, Math.floor(pointsUsed / 100) * 500);
-    pointsUsed = Math.ceil(pointsCents / 500) * 100;
-    if (pointsCents < 0) pointsCents = 0;
+    const cap = Math.floor(Math.max(0, subtotal - discountCents) * Math.min(100, Math.max(0, maxRedeemPercent)) / 100);
+    pointsCents = Math.min(cap, Math.floor(Math.min(int(pointsToUse, { min: 0, fallback: 0 }), available) / 100) * per100);
+    pointsUsed = Math.ceil(pointsCents / per100) * 100;
   }
 
   let deliveryCents = 0;
@@ -118,7 +123,7 @@ function orderNumber() {
   const prefix = str(config().commerce.orderPrefix, 8) || "ORD-";
   const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, "");
   for (let i = 0; i < 50; i++) {
-    const candidate = `${prefix}${stamp}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const candidate = `${prefix}${stamp}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     if (!db.prepare("SELECT 1 FROM orders WHERE number = ?").get(candidate)) return candidate;
   }
   return `${prefix}${Date.now()}`;
@@ -127,13 +132,14 @@ function orderNumber() {
 /* -------------------------------- creation -------------------------------- */
 
 export function createOrder(input) {
-  const customer = input.email ? upsertCustomer({ email: input.email, name: input.name, phone: input.phone }) : null;
-  const q = quote({ ...input, customer: input.customer || customer });
+  // Price the cart before any write: a failed quote must not touch customers.
+  const q = quote({ ...input, customer: input.customer || null });
   if (!q.ok) throw new Error(q.error);
+  const customer = input.customer || (input.email ? upsertCustomer({ email: input.email, name: input.name, phone: input.phone }) : null);
 
   const created = tx(() => {
     const number = orderNumber();
-    const token = `ot_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+    const token = `ot_${randToken(12)}`;
     const info = insert("orders", {
       number,
       token,
@@ -219,6 +225,13 @@ export function getOrder(identifier) {
   return { ...row, items: orderItems(row.id) };
 }
 
+// Public pages are capability URLs. Only the token may fetch an order there —
+// numbers are short and date-stamped, and must never be a public lookup key.
+export function getOrderByToken(token) {
+  const row = token ? db.prepare("SELECT * FROM orders WHERE token = ?").get(String(token)) : null;
+  return row ? { ...row, items: orderItems(row.id) } : null;
+}
+
 export function orderItems(orderId) {
   return db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY id").all(orderId);
 }
@@ -257,15 +270,21 @@ export function markPaid(orderId, { stripeSession = null } = {}) {
   const order = getOrder(orderId);
   if (!order) throw new Error("Order not found.");
   if (order.payment_status === "paid") return order;
+  // A cancelled order can still be paid (late webhook, pay-at-door after
+  // cancellation); money arrived, so it becomes confirmed rather than staying cancelled.
   db.prepare(
-    "UPDATE orders SET payment_status = 'paid', paid_at = ?, status = CASE WHEN status = 'pending' THEN 'confirmed' ELSE status END, stripe_session = COALESCE(?, stripe_session), updated_at = ? WHERE id = ?"
+    "UPDATE orders SET payment_status = 'paid', paid_at = ?, status = CASE WHEN status IN ('pending','cancelled') THEN 'confirmed' ELSE status END, stripe_session = COALESCE(?, stripe_session), updated_at = ? WHERE id = ?"
   ).run(nowIso(), stripeSession, nowIso(), order.id);
   if (order.customer_id) awardPoints(order.customer_id, order.total_cents, order.id);
   return getOrder(order.id);
 }
 
 export function markRefunded(orderId) {
+  const order = getOrder(orderId);
+  if (!order) throw new Error("Order not found.");
   db.prepare("UPDATE orders SET payment_status = 'refunded', updated_at = ? WHERE id = ?").run(nowIso(), orderId);
+  // Points earned on a refunded order are taken back off the ledger.
+  revokePointsForOrder(orderId);
 }
 
 export function setOrderNotes(orderId, { admin_notes }) {
@@ -284,17 +303,22 @@ export function expireStalePending(days = 2) {
 /* --------------------------------- stats ---------------------------------- */
 
 export function orderStats() {
-  const today = new Date().toISOString().slice(0, 10);
+  // Day-based counts use the business's local day, not the server's UTC day.
+  const tz = config().business.timezone;
+  const today = localDateStr(new Date(), tz);
+  const [y, m, d] = today.split("-").map(Number);
+  const dayStart = zonedToUtc(y, m, d, 0, 0, tz).toISOString();
+  const dayEnd = zonedToUtc(y, m, d, 23, 59, 59, tz).toISOString();
   return {
-    today: db.prepare("SELECT COUNT(*) AS n FROM orders WHERE created_at LIKE ?").get(`${today}%`).n,
+    today: db.prepare("SELECT COUNT(*) AS n FROM orders WHERE created_at >= ? AND created_at <= ?").get(dayStart, dayEnd).n,
     pending: db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status = 'pending' AND payment_status != 'paid'").get().n,
     open: db.prepare("SELECT COUNT(*) AS n FROM orders WHERE status IN ('pending','confirmed','ready')").get().n,
     revenue30: db.prepare(
       "SELECT COALESCE(SUM(total_cents),0) AS n FROM orders WHERE payment_status = 'paid' AND created_at >= ?"
     ).get(new Date(Date.now() - 30 * 86400_000).toISOString()).n,
     revenueToday: db.prepare(
-      "SELECT COALESCE(SUM(total_cents),0) AS n FROM orders WHERE payment_status = 'paid' AND created_at LIKE ?"
-    ).get(`${today}%`).n,
+      "SELECT COALESCE(SUM(total_cents),0) AS n FROM orders WHERE payment_status = 'paid' AND created_at >= ? AND created_at <= ?"
+    ).get(dayStart, dayEnd).n,
     allTime: db.prepare("SELECT COALESCE(SUM(total_cents),0) AS n FROM orders WHERE payment_status = 'paid'").get().n
   };
 }

@@ -1,8 +1,9 @@
 import express from "express";
+import crypto from "node:crypto";
 import { db } from "./core/db.js";
 import { config } from "./core/config.js";
 import { isEnabled } from "./core/modules.js";
-import { attachUser } from "./core/auth.js";
+import { attachUser, sameOrigin } from "./core/auth.js";
 import { requestId, notFound, errorHandler, noStore } from "./core/http.js";
 import { publicDir } from "./core/assets.js";
 import { UPLOAD_DIR } from "./core/media.js";
@@ -29,19 +30,31 @@ function cookieParser(req, _res, next) {
 
 export function createApp() {
   const app = express();
-  app.set("trust proxy", 1);
+  // Trust exactly one reverse proxy by default; override with TRUST_PROXY
+  // ("true", a hop count, or a comma-separated IP list) per deployment.
+  const trustProxy = process.env.TRUST_PROXY ?? "1";
+  app.set(
+    "trust proxy",
+    trustProxy === "true" || trustProxy === "false" ? trustProxy === "true" : trustProxy
+  );
   app.disable("x-powered-by");
 
   app.use(requestId);
+  // Every rendered script tag carries this nonce; the CSP below enforces it.
   app.use((_req, res, next) => {
+    res.locals.nonce = crypto.randomBytes(16).toString("base64");
+    next();
+  });
+  app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
-        "script-src 'self' 'unsafe-inline'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      `default-src 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; ` +
+        `script-src 'self' 'nonce-${res.locals.nonce}'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`
     );
     next();
   });
@@ -80,8 +93,14 @@ export function createApp() {
   app.use(express.json({ limit: "1mb" }));
   // Sessions and the CSRF token are needed by public forms as well as the admin.
   app.use(attachUser);
+  // Uploaded SVGs are documents when opened directly; sandbox them so even a
+  // sanitiser gap cannot run script in the site's own origin.
+  const mediaCsp = (_req, res, next) => {
+    res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    next();
+  };
   app.use(express.static(publicDir, { maxAge: "1h", index: false, dotfiles: "ignore" }));
-  app.use("/media", express.static(UPLOAD_DIR, { maxAge: "30d", immutable: true, index: false, dotfiles: "deny", fallthrough: true }));
+  app.use("/media", mediaCsp, express.static(UPLOAD_DIR, { maxAge: "30d", immutable: true, index: false, dotfiles: "deny", fallthrough: true }));
 
   app.get("/health", (_req, res) => res.json({ ok: true, schema: db.prepare("PRAGMA user_version").get().user_version }));
   app.get("/favicon.ico", (_req, res) => res.status(204).end());
@@ -107,4 +126,4 @@ export function createApp() {
   return app;
 }
 
-export { attachUser, noStore, config, isEnabled };
+export { attachUser, noStore, config, isEnabled, sameOrigin };

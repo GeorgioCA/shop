@@ -122,7 +122,7 @@ Storage is one validated JSON row per namespace in `settings`. A cache is repain
 | Delivery | Fee, free-over threshold, area | Ordering |
 | Appointments | Slot generation, bookings, closures, staff | Services |
 | Inquiries | Contact and quote-request inbox | — |
-| Customer accounts | Sign-in, order/booking history, points display | — |
+| Customer accounts | Email-verified sign-up, sign-in, order/booking history, points display | — |
 | Reviews | Moderation and star ratings on products/services | — |
 | Loyalty | Points earned on paid orders, redeemed at checkout | Accounts + ordering |
 | Newsletter | Footer signup, subscriber list, CSV | — |
@@ -255,9 +255,9 @@ Dependencies: only the source stack (`express`, `multer`, `sharp`, `stripe`) plu
 | Public site, SEO, sitemap, responsive CSS | Done |
 | 19 presets + custom | Done |
 | Docker, compose, env contract, deployment/admin/architecture docs | Done |
-| Unit + integration suite | Done — 40 passing |
-| Playwright e2e, three industries | Done — passing |
-| Layout audit at 1440 / 390 px | Done — no horizontal overflow across four presets |
+| Unit + integration suite | Done — 51 passing (incl. security regression tests) |
+| Playwright e2e, three industries | Done — passing, re-run after the security revision (0 console errors) |
+| Layout audit at 1440 / 390 px | Done — no horizontal overflow across four presets (re-run after the security revision) |
 
 ---
 
@@ -265,8 +265,8 @@ Dependencies: only the source stack (`express`, `multer`, `sharp`, `stripe`) plu
 
 ```
 $ npm test
-ℹ tests 40
-ℹ pass 40
+ℹ tests 51
+ℹ pass 51
 ℹ fail 0
 ```
 
@@ -285,6 +285,7 @@ Layout audit: `scrollWidth === innerWidth` at 1440×960 and 390×844 for restaur
 
 ## 17. Known limitations and intentional scope
 
+- **Customer accounts require email verification** (password parked until the emailed link is clicked; no-mail deployments cannot self-register). Customer password reset / self-service change is not built.
 - **Stripe live API not exercised here** (no keys). Demo mode covers the paid path; the webhook verifies signatures and only marks paid when Stripe reports `paid`. Live keys remain an operator step.
 - **Resend live sending not exercised.** Templates render; every attempt is logged; the no-key path is verified.
 - **One process, one replica.** SQLite and in-memory caches assume a single writer.

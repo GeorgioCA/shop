@@ -41,10 +41,22 @@ function safeSvg(buffer) {
   const text = buffer.toString("utf8");
   if (!/<svg[\s>]/i.test(text)) throw new Error("That file is not a valid SVG.");
   // An SVG is executable in the browser. Uploads are same-origin, so strip the
-  // constructs that can run script or load remote resources.
-  if (/<\s*(script|foreignObject|iframe|object|embed)\b/i.test(text)) throw new Error("SVG files with scripts are not allowed.");
+  // constructs that can run script or load remote resources. Script can also
+  // arrive through SMIL animation and external <use>/href references, so those
+  // are banned outright, and every href must be a same-file fragment.
+  if (/<\s*(script|foreignObject|iframe|object|embed|animate|animateTransform|animateMotion|set|handler)\b/i.test(text)) {
+    throw new Error("SVG files with scripts or animation are not allowed.");
+  }
   if (/\son\w+\s*=/i.test(text)) throw new Error("SVG files with event handlers are not allowed.");
-  if (/(href|xlink:href)\s*=\s*["']?\s*(javascript:|data:text\/html)/i.test(text)) throw new Error("SVG links are not allowed.");
+  if (/javascript:|data:text\/html|vbscript:/i.test(text)) throw new Error("SVG links are not allowed.");
+  // Every href — quoted or not — must be a same-file fragment ("#id").
+  const quoted = /(?:^|\s)(?:xlink:href|href)\s*=\s*["']([^"']*)["']/gi;
+  const unquoted = /(?:^|\s)(?:xlink:href|href)\s*=\s*([^"'\s>]+)/gi;
+  for (const re of [quoted, unquoted]) {
+    for (const match of text.matchAll(re)) {
+      if (!match[1].startsWith("#")) throw new Error("SVG files may only link within themselves.");
+    }
+  }
   return text.replace(/<\?xml[^>]*\?>/i, "").trim();
 }
 

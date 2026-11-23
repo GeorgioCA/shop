@@ -9,6 +9,10 @@ export function mailConfigured() {
   return !!process.env.RESEND_API_KEY;
 }
 
+// Override for self-hosted/proxied Resend endpoints and for tests, which
+// capture the outbound payload instead of calling the real API.
+export const mailApiUrl = () => process.env.RESEND_API_URL || "https://api.resend.com";
+
 function fromAddress() {
   const e = config().email;
   const email = e.fromEmail || process.env.EMAIL_FROM || "";
@@ -58,7 +62,7 @@ export async function sendMail({ to, subject, html, template = "", replyTo }) {
   }
 
   try {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await fetch(mailApiUrl(), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
@@ -181,6 +185,20 @@ export async function sendInquiryAck(inquiry) {
       heading: "Thanks for getting in touch",
       intro: `Hi ${esc(inquiry.name.split(" ")[0] || "there")}, we have your message and will reply shortly.`,
       body: `<p style="margin:0;color:#6b6560">Your reference is <strong>${esc(inquiry.number)}</strong>.</p>`
+    })
+  });
+}
+
+export async function sendCustomerVerification(customer, url) {
+  return sendMail({
+    to: customer.email,
+    subject: `Confirm your account — ${config().business.name}`,
+    template: "customer_verification",
+    html: emailTemplate({
+      heading: "Confirm your account",
+      intro: `Hi ${esc(customer.name.split(" ")[0] || "there")}, click the button below to finish creating your account for ${esc(config().business.name)}.`,
+      body: `<p style="margin:0;color:#6b6560">The link works for 48 hours. If you did not request this, you can ignore this email — nothing was changed.</p>`,
+      cta: url ? { label: "Confirm my account", url } : null
     })
   });
 }

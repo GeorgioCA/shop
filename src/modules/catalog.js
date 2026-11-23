@@ -1,5 +1,6 @@
 // Product catalog data access + validation. Products are data, never code.
 
+import crypto from "node:crypto";
 import { db, jsonParse, insert, update } from "../core/db.js";
 import { config } from "../core/config.js";
 import { id, nowIso, slugify, uniqueSlug, str, int, bool, parseCents, oneLine } from "../core/util.js";
@@ -153,7 +154,7 @@ export function saveProduct(input) {
 export function suggestSku(name) {
   const base = String(name || "item").replace(/[^a-zA-Z0-9]/g, "").slice(0, 3).toUpperCase() || "ITM";
   for (let i = 0; i < 50; i++) {
-    const candidate = `SKU-${base}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const candidate = `SKU-${base}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
     if (!db.prepare("SELECT 1 FROM products WHERE sku = ?").get(candidate)) return candidate;
   }
   return `SKU-${Date.now().toString(36).toUpperCase()}`;

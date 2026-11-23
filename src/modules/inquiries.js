@@ -1,5 +1,6 @@
 // Inquiries: contact forms, quote requests and questions — one inbox.
 
+import crypto from "node:crypto";
 import { db, insert } from "../core/db.js";
 import { nowIso, str, emailOk, int, paginate } from "../core/util.js";
 import { config } from "../core/config.js";
@@ -15,7 +16,7 @@ export function createInquiry(input) {
   const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, "");
   let number;
   do {
-    number = `INQ-${stamp}-${Math.random().toString(36).slice(2, 5).toUpperCase()}`;
+    number = `INQ-${stamp}-${crypto.randomBytes(2).toString("hex").toUpperCase()}`;
   } while (db.prepare("SELECT 1 FROM inquiries WHERE number = ?").get(number));
 
   const info = insert("inquiries", {

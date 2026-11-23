@@ -1,7 +1,7 @@
 // Section registry: one definition drives both the admin editor and the
 // renderer. A section is an ordered, typed block of content — not a page builder.
 
-import { str, int, bool, listFromLines } from "../core/util.js";
+import { str, int, bool, listFromLines, urlOk } from "../core/util.js";
 
 const F = (type, label, extra = {}) => ({ type, label, ...extra });
 
@@ -231,6 +231,12 @@ export function normalizeSection(input) {
         break;
       case "pairs": out[key] = str(value, 4000); break;
       case "lines": out[key] = listFromLines(str(value, 4000)).slice(0, 24).join("\n"); break;
+      case "url": {
+        const v = str(value, field.max ?? 300);
+        if (v && !urlOk(v)) throw new Error(`${field.label} must start with http://, https://, mailto:, tel: or /.`);
+        out[key] = v;
+        break;
+      }
       default: out[key] = str(value, field.max ?? 500);
     }
   }

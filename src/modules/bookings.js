@@ -1,10 +1,11 @@
 // Bookings and availability. Slots are generated from operating hours, the
 // service duration, existing bookings and closures — never stored as rows.
 
+import crypto from "node:crypto";
 import { db, insert, tx } from "../core/db.js";
 import { config } from "../core/config.js";
 import {
-  id, nowIso, str, emailOk, phoneOk, int, fmtTime, localDateStr, addDays,
+  id, randToken, nowIso, str, emailOk, phoneOk, int, fmtTime, localDateStr, addDays,
   dayOfWeek, hhmmToMinutes, zonedToUtc, localParts, minutesToHhmm, parseLocalDateTime
 } from "../core/util.js";
 import { getService } from "./services.js";
@@ -113,7 +114,7 @@ function bookingNumber() {
   const prefix = str(config().bookings.bookingPrefix, 8) || "BK-";
   const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, "");
   for (let i = 0; i < 40; i++) {
-    const candidate = `${prefix}${stamp}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const candidate = `${prefix}${stamp}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     if (!db.prepare("SELECT 1 FROM bookings WHERE number = ?").get(candidate)) return candidate;
   }
   return `${prefix}${Date.now()}`;
@@ -134,15 +135,17 @@ export function createBooking(input) {
   const startsAt = new Date(String(input.starts_at || ""));
   if (Number.isNaN(startsAt.getTime())) throw new Error("Choose a time.");
   const dateStr = localDateStr(startsAt, cfg.business.timezone);
-  const day = availability(service, dateStr);
-  const slot = day.slots.find((s) => new Date(s.start).getTime() === startsAt.getTime() && s.available);
-  if (!slot) throw new Error("That time is no longer available. Please choose another.");
 
-  const token = id("bt_");
-  const status = cfg.bookings.confirmationMode === "auto" ? "confirmed" : "pending";
-  const number = bookingNumber();
-
+  // BEGIN IMMEDIATE holds the write lock across the availability re-check and
+  // the insert, so two concurrent requests for the last slot cannot both pass.
   const booking = tx(() => {
+    const day = availability(service, dateStr);
+    const slot = day.slots.find((s) => new Date(s.start).getTime() === startsAt.getTime() && s.available);
+    if (!slot) throw new Error("That time is no longer available. Please choose another.");
+
+    const token = `bt_${randToken(12)}`;
+    const status = cfg.bookings.confirmationMode === "auto" ? "confirmed" : "pending";
+    const number = bookingNumber();
     const customer = upsertCustomer({ email, name, phone });
     const info = insert("bookings", {
       number,
@@ -164,17 +167,24 @@ export function createBooking(input) {
       admin_notes: ""
     });
     return { id: Number(info.lastInsertRowid), number, token, status };
-  });
+  }, "IMMEDIATE");
 
   return getBooking(booking.id);
 }
 
+// Public pages must resolve bookings by token only — booking numbers are short
+// and enumerable and must never act as a public capability URL.
 export function getBooking(identifier) {
   if (identifier === undefined || identifier === null || identifier === "") return null;
   const asId = Number(identifier);
   return Number.isInteger(asId) && String(asId) === String(identifier)
     ? db.prepare("SELECT * FROM bookings WHERE id = ?").get(asId) || null
     : db.prepare("SELECT * FROM bookings WHERE token = ? OR number = ?").get(String(identifier), String(identifier)) || null;
+}
+
+export function getBookingByToken(token) {
+  const row = token ? db.prepare("SELECT * FROM bookings WHERE token = ?").get(String(token)) : null;
+  return row || null;
 }
 
 export function setBookingStatus(bookingId, status) {

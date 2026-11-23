@@ -138,6 +138,10 @@ db.exec(`
     marketing     INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT,
     points        INTEGER NOT NULL DEFAULT 0,
+    session_version INTEGER NOT NULL DEFAULT 1,
+    verification_token   TEXT,
+    verification_expires TEXT,
+    pending_password_hash TEXT,
     created_at    TEXT NOT NULL,
     last_seen_at  TEXT
   );
@@ -368,12 +372,24 @@ if (currentVersion < 1) {
   db.exec("PRAGMA user_version = 1");
 }
 
+if (currentVersion < 2) {
+  // v2: customer sessions are revocable and accounts require email verification.
+  addColumn("customers", "session_version", "INTEGER NOT NULL DEFAULT 1");
+  addColumn("customers", "verification_token", "TEXT");
+  addColumn("customers", "verification_expires", "TEXT");
+  addColumn("customers", "pending_password_hash", "TEXT");
+  db.exec("PRAGMA user_version = 2");
+}
+
 export const schemaVersion = () => db.prepare("PRAGMA user_version").get().user_version;
 
 /* ------------------------------ transactions ----------------------------- */
 
-export function tx(fn) {
-  db.exec("BEGIN");
+// "IMMEDIATE" takes the SQLite write lock up front, so a check-then-write
+// sequence inside the callback cannot interleave with another writer. Use it
+// wherever a transaction re-validates state that was read outside (e.g. booking slots).
+export function tx(fn, mode = "DEFERRED") {
+  db.exec(`BEGIN ${mode === "IMMEDIATE" ? "IMMEDIATE" : "DEFERRED"}`);
   try {
     const out = fn();
     db.exec("COMMIT");
@@ -393,8 +409,13 @@ export const jsonParse = (text, fallback) => {
   }
 };
 
+// Table/row helpers build SQL from identifiers. Callers are internal, but the
+// identifiers are validated so a future caller can never pass user data here.
+const IDENT = /^[a-z_][a-z0-9_]*$/;
+
 export const insert = (table, row) => {
   const keys = Object.keys(row);
+  if (!IDENT.test(table) || keys.some((k) => !IDENT.test(k))) throw new Error("Invalid identifier in insert().");
   const stmt = db.prepare(
     `INSERT INTO ${table} (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`
   );
@@ -402,8 +423,10 @@ export const insert = (table, row) => {
 };
 
 export const update = (table, idValue, row, idColumn = "id") => {
+  if (!IDENT.test(table) || !IDENT.test(idColumn)) throw new Error("Invalid identifier in update().");
   const keys = Object.keys(row).filter((k) => k !== idColumn);
   if (!keys.length) return;
+  if (keys.some((k) => !IDENT.test(k))) throw new Error("Invalid identifier in update().");
   const stmt = db.prepare(
     `UPDATE ${table} SET ${keys.map((k) => `${k} = ?`).join(", ")} WHERE ${idColumn} = ?`
   );

@@ -6,7 +6,7 @@ import { config } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
 import { requireAuth, requirePermission, verifyCsrf } from "../core/auth.js";
 import { setFlash, popFlash, noStore, bodyBool, asyncHandler } from "../core/http.js";
-import { esc, money, toCsv, localDateStr, nowIso, paginate, int, str, fmtDate, fmtTime } from "../core/util.js";
+import { esc, money, toCsv, localDateStr, nowIso, paginate, int, str, fmtDate, fmtTime, zonedToUtc } from "../core/util.js";
 import { adminLayout } from "../views/layout.js";
 import { listProducts, getProduct, saveProduct, deleteProduct, listCategories, saveCategory, deleteCategory, toggleProductFlag, productStats, suggestSku } from "../modules/catalog.js";
 import { listServices, getService, saveService, deleteService, listStaff, saveStaff, deleteStaff } from "../modules/services.js";
@@ -36,7 +36,7 @@ commerce.use((req, res, next) => {
 const view = (req, res, { title, body, active = "", wide = false, subtitle = "", actions = "", breadcrumbs = [], status = 200 }) => {
   res.status(status).send(adminLayout({
     title, body, active, wide, subtitle, actions, breadcrumbs,
-    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf
+    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf, nonce: res.locals.nonce
   }));
 };
 
@@ -318,9 +318,13 @@ commerce.post("/orders/:number/refunded", requirePermission("orders.manage"), (r
 
 commerce.post("/orders/:number/notes", requirePermission("orders.manage"), (req, res) => {
   const order = getOrder(req.params.number);
-  if (order) setOrderNotes(order.id, { admin_notes: req.body?.admin_notes });
+  if (!order) {
+    setFlash(res, "error", "Order not found.");
+    return res.redirect("/admin/orders");
+  }
+  setOrderNotes(order.id, { admin_notes: req.body?.admin_notes });
   setFlash(res, "success", "Notes saved.");
-  res.redirect(`/admin/orders/${req.params.number}`);
+  res.redirect(`/admin/orders/${order.number}`);
 });
 
 commerce.post("/orders/:number/email", requirePermission("orders.manage"), asyncHandler(async (req, res) => {
@@ -342,7 +346,15 @@ commerce.get("/bookings", requirePermission("bookings.view"), (req, res) => {
   if (viewMode === "upcoming") {
     bookings = listBookings({ from: nowIso(), limit: 200 });
   } else {
-    bookings = listBookings({ from: `${date}T00:00`, to: `${date}T23:59`, limit: 200 });
+    // Day bounds are computed in the business's zone: a 7pm local booking is
+    // stored near midnight UTC the next calendar day and would otherwise
+    // vanish from its own day. (starts_at/ends_at are UTC ISO strings.)
+    const [y, m, d] = date.split("-").map(Number);
+    bookings = listBookings({
+      from: zonedToUtc(y, m, d, 0, 0, tz).toISOString(),
+      to: zonedToUtc(y, m, d, 23, 59, 59, tz).toISOString(),
+      limit: 200
+    });
   }
   view(req, res, {
     title: "Bookings", active: "/admin/bookings",

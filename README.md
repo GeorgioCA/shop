@@ -70,7 +70,7 @@ Everything after step 1 happens in `/admin`. No source edits and no redeploy.
 | Delivery | Delivery option, fees, free-over threshold, area | Online ordering |
 | Appointments | Slot generation, booking management, time off | Service catalog |
 | Inquiries | Contact and quote-request inbox | — |
-| Customer accounts | Sign-in, order and booking history | — |
+| Customer accounts | Email-verified sign-up, sign-in, order and booking history | — |
 | Reviews | Moderated reviews and ratings | — |
 | Loyalty | Points earned on paid orders, redeemed at checkout | Accounts + ordering |
 | Newsletter | Footer signup and subscriber list | — |

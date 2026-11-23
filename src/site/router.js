@@ -4,22 +4,22 @@ import express from "express";
 import { db } from "../core/db.js";
 import { config, tipPresets } from "../core/config.js";
 import { isEnabled } from "../core/modules.js";
-import { signToken, verifyToken, readCookie, cookieOptions, clearSessionCookie, verifyCsrf } from "../core/auth.js";
+import { signToken, verifyToken, readCookie, cookieOptions, clearSessionCookie, verifyCsrf, sameOrigin } from "../core/auth.js";
 import { asyncHandler, rateLimit, setFlash, popFlash } from "../core/http.js";
 import { esc, slugify, localDateStr, addDays, fmtDate, fmtTime, money } from "../core/util.js";
 import { mediaPath } from "../core/media.js";
 import { anyOnlineMode, createCheckoutSession, demoPayments, onlinePaymentsAvailable } from "../core/payments.js";
-import { sendOrderConfirmation, sendBookingConfirmation, sendInquiryAck, sendOwnerAlert } from "../core/mail.js";
+import { mailConfigured, sendCustomerVerification, sendOrderConfirmation, sendBookingConfirmation, sendInquiryAck, sendOwnerAlert } from "../core/mail.js";
 import { getPage, homePage, publishedPages, sitemapEntries } from "../modules/content.js";
 import { listProducts, listCategories, getProduct, productStats } from "../modules/catalog.js";
 import { listServices, getService } from "../modules/services.js";
-import { createOrder, quote, getOrder } from "../modules/orders.js";
+import { createOrder, quote, getOrderByToken } from "../modules/orders.js";
 import { evaluateDiscount } from "../modules/discounts.js";
-import { createBooking, getBooking, availabilityWindow, availability } from "../modules/bookings.js";
+import { createBooking, getBookingByToken, availabilityWindow, availability } from "../modules/bookings.js";
 import { createInquiry } from "../modules/inquiries.js";
 import { createReview, approvedReviews, reviewSummary } from "../modules/reviews.js";
 import { subscribe } from "../modules/newsletter.js";
-import { getCustomer, verifyCustomer, customerOrders, customerBookings, customerPoints, createCustomerAccount } from "../modules/customers.js";
+import { getCustomer, verifyCustomer, customerOrders, customerBookings, customerPoints, requestCustomerAccount, verifyCustomerAccount } from "../modules/customers.js";
 import { siteLayout } from "../views/layout.js";
 import {
   renderHome, renderContentPage, renderCatalog, renderProduct, renderServices, renderService,
@@ -40,7 +40,9 @@ site.use((req, res, next) => {
   const payload = token ? verifyToken(token) : null;
   if (payload?.cid) {
     const c = getCustomer(payload.cid);
-    if (c?.password_hash) req.customer = c;
+    // The version in the token must match the row: a password change or
+    // verification invalidates every existing customer session.
+    if (c?.password_hash && (payload.v || 1) === (c.session_version || 1)) req.customer = c;
   }
   res.locals.customer = req.customer;
   next();
@@ -48,7 +50,7 @@ site.use((req, res, next) => {
 
 const page = (req, res, html, opts = {}) =>
   res.send(siteLayout({
-    ...opts, body: html, csrf: res.locals.csrf, flash: popFlash(req, res),
+    ...opts, body: html, csrf: res.locals.csrf, flash: popFlash(req, res), nonce: res.locals.nonce,
     canonical: opts.canonical || (process.env.PUBLIC_BASE_URL ? `${process.env.PUBLIC_BASE_URL.replace(/\/$/, "")}${req.path}` : "")
   }));
 
@@ -118,7 +120,7 @@ site.get("/product/:slug", (req, res, next) => {
   const reviews = isEnabled("reviews") ? approvedReviews(product.id) : [];
   const avg = isEnabled("reviews") ? reviewSummary(product.id) : { count: 0, average: 0 };
   const related = listProducts({ activeOnly: true, categoryId: product.category_id, limit: 4 }).filter((p) => p.id !== product.id).slice(0, 3);
-  page(req, res, renderProduct({ product, members, reviews, reviewAvg: avg, csrf: res.locals.csrf, related }), {
+  page(req, res, renderProduct({ product, members, reviews, reviewAvg: avg, csrf: res.locals.csrf, related, nonce: res.locals.nonce }), {
     title: product.name,
     description: product.short_desc || product.description.slice(0, 200),
     canonical: `${process.env.PUBLIC_BASE_URL || ""}/product/${product.slug}`,
@@ -201,7 +203,9 @@ site.post("/book", asyncHandler(async (req, res) => {
 
 site.get("/booking/:token", (req, res, next) => {
   if (!isEnabled("bookings")) return next();
-  const booking = getBooking(req.params.token);
+  // Token only: booking numbers are short and enumerable, so they must not
+  // work as public capability URLs.
+  const booking = getBookingByToken(req.params.token);
   if (!booking) return next();
   const cfg = config();
   const tz = cfg.business.timezone;
@@ -230,7 +234,7 @@ site.get("/checkout", (req, res, next) => {
   page(req, res, renderCheckout({ csrf: res.locals.csrf, customer: req.customer, points }), { title: "Checkout", noindex: true });
 });
 
-site.post("/api/quote", (req, res) => {
+site.post("/api/quote", rateLimit({ windowMs: 60_000, max: 60, message: "Too many pricing attempts. Try again shortly." }), (req, res) => {
   if (!isEnabled("commerce")) return res.status(404).json({ error: "Not available" });
   const q = quote({
     items: req.body?.items,
@@ -257,7 +261,7 @@ site.post("/api/quote", (req, res) => {
   });
 });
 
-site.get("/api/discount", (req, res) => {
+site.get("/api/discount", rateLimit({ windowMs: 60_000, max: 20, message: "Too many code checks. Try again shortly." }), (req, res) => {
   if (!isEnabled("promotions")) return res.status(404).json({ error: "Not available" });
   const subtotal = Number(req.query.subtotal) || 0;
   const result = evaluateDiscount(String(req.query.code || ""), subtotal);
@@ -300,6 +304,7 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
     if (method === "stripe" && onlinePaymentsAvailable()) {
       const order = createOrder({
         ...body, items: cart, payment_method: "stripe", paid: false,
+        customer: req.customer,
         tipCents: Number(body.tip_cents) || 0,
         pointsToUse: body.use_points ? customerPoints(req.customer?.id) : 0
       });
@@ -317,6 +322,7 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
     const demo = method === "stripe" && demoPayments();
     const order = createOrder({
       ...body, items: cart, payment_method: method === "stripe" ? "stripe" : "offline",
+      customer: req.customer,
       paid: demo,
       tipCents: Number(body.tip_cents) || 0,
       pointsToUse: body.use_points ? customerPoints(req.customer?.id) : 0
@@ -332,7 +338,8 @@ site.post("/api/checkout", rateLimit({ windowMs: 60_000, max: 12, message: "Too 
 
 site.get("/order/:token", (req, res, next) => {
   if (!isEnabled("commerce")) return next();
-  const order = getOrder(req.params.token);
+  // Token only — see getOrderByToken for why numbers must not be usable here.
+  const order = getOrderByToken(req.params.token);
   if (!order) return next();
   page(req, res, renderOrder({ order, items: order.items, justPaid: req.query.paid === "1" }), {
     title: `Order ${order.number}`, noindex: true, csrf: res.locals.csrf
@@ -386,25 +393,51 @@ site.get("/account", (req, res, next) => {
   }), { title: "Your account", noindex: true });
 });
 
-site.post("/account/login", rateLimit({ windowMs: 60_000, max: 8 }), (req, res) => {
+site.post("/account/login", sameOrigin, rateLimit({ windowMs: 60_000, max: 8 }), (req, res) => {
   if (!isEnabled("accounts")) return res.status(404).send("Not available.");
   if (!verifyCsrf(req)) return res.status(403).send("Session expired. Refresh and try again.");
   const customer = verifyCustomer(req.body?.email, req.body?.password);
   if (!customer) return res.redirect("/account?error=" + encodeURIComponent("That email and password do not match."));
-  res.cookie(CUSTOMER_COOKIE, signToken({ cid: customer.id }, 30 * 86400_000), cookieOptions(req, 30 * 86400_000));
+  res.cookie(CUSTOMER_COOKIE, signToken({ cid: customer.id, v: customer.session_version || 1 }, 30 * 86400_000), cookieOptions(req, 30 * 86400_000));
   res.redirect("/account");
 });
 
-site.post("/account/register", rateLimit({ windowMs: 60_000, max: 6 }), (req, res) => {
+site.post("/account/register", sameOrigin, rateLimit({ windowMs: 60_000, max: 6 }), async (req, res) => {
   if (!isEnabled("accounts")) return res.status(404).send("Not available.");
   if (!verifyCsrf(req)) return res.status(403).send("Session expired. Refresh and try again.");
   try {
-    const customer = createCustomerAccount(String(req.body?.email || ""), String(req.body?.password || ""), String(req.body?.name || ""));
-    res.cookie(CUSTOMER_COOKIE, signToken({ cid: customer.id }, 30 * 86400_000), cookieOptions(req, 30 * 86400_000));
+    if (!mailConfigured()) {
+      throw new Error("Account confirmation email is not available right now. Please contact us to set up your account.");
+    }
+    const { customer, token } = requestCustomerAccount(String(req.body?.email || ""), String(req.body?.password || ""), String(req.body?.name || ""));
+    const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get("host")}`;
+    const sent = await sendCustomerVerification(customer, `${base}/account/verify?token=${encodeURIComponent(token)}`);
+    // Never confirm to the visitor whether the email exists on an order; the
+    // message is the same either way.
+    if (!sent.ok && !sent.skipped) {
+      setFlash(res, "error", "We could not send the confirmation email. Please try again.");
+      return res.redirect("/account");
+    }
+    setFlash(res, "success", "Check your email — we sent a link to finish creating your account.");
     res.redirect("/account");
   } catch (err) {
-    res.redirect(`/account?error=${encodeURIComponent(err.message)}`);
+    setFlash(res, "error", err.message);
+    res.redirect("/account");
   }
+});
+
+site.get("/account/verify", rateLimit({ windowMs: 60_000, max: 20 }), (req, res, next) => {
+  if (!isEnabled("accounts")) return next();
+  const customer = verifyCustomerAccount(String(req.query.token || ""));
+  if (!customer) {
+    return page(req, res, renderAccount({
+      customer: null, csrf: res.locals.csrf,
+      error: "That confirmation link is invalid or has expired. Register again to receive a new one."
+    }), { title: "Your account", noindex: true });
+  }
+  res.cookie(CUSTOMER_COOKIE, signToken({ cid: customer.id, v: customer.session_version || 1 }, 30 * 86400_000), cookieOptions(req, 30 * 86400_000));
+  setFlash(res, "success", "Your account is ready.");
+  res.redirect("/account");
 });
 
 site.post("/account/logout", (req, res) => {
@@ -419,6 +452,9 @@ site.post("/account/logout", (req, res) => {
 site.get("/media/:file", (req, res, next) => {
   const file = String(req.params.file || "");
   if (!/^[a-zA-Z0-9_.-]+$/.test(file)) return next();
+  // Matches the app-level /media policy: uploaded SVGs must not be able to run
+  // script in the site origin when opened directly.
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox");
   res.sendFile(mediaPath(file), { maxAge: "30d", immutable: true }, (err) => { if (err) next(); });
 });
 

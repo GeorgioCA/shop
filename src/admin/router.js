@@ -3,17 +3,15 @@
 
 import express from "express";
 import fs from "node:fs";
-import { db } from "../core/db.js";
+import { db, audit, tx } from "../core/db.js";
 import { config, SCHEMA, saveConfig, markSetupComplete, isSetupComplete, DAYS } from "../core/config.js";
 import { isEnabled, allModules, setModuleEnabled, MODULE_MAP } from "../core/modules.js";
-import {
-  attachUser, requireAuth, requirePermission, can, verifyLogin, countUsers, createUser, getUser,
-  listUsers, updateUser, setUserPassword, deleteUser, setSessionCookie, clearSessionCookie, verifyCsrf, ROLES
-} from "../core/auth.js";
+import { attachUser, requireAuth, requirePermission, can, verifyLogin, countUsers, createUser, getUser,
+  listUsers, updateUser, setUserPassword, deleteUser, setSessionCookie, clearSessionCookie, verifyCsrf, ROLES, sameOrigin } from "../core/auth.js";
 import { setFlash, popFlash, noStore, asyncHandler, rateLimit, bodyBool } from "../core/http.js";
-import { esc, money, fmtDate, int, str } from "../core/util.js";
+import { esc, money, fmtDate, int, str, safeNext } from "../core/util.js";
 import { upload, saveUpload, listMedia, updateMedia, deleteMedia, mediaUrl, getMedia, MAX_BYTES } from "../core/media.js";
-import { audit } from "../core/db.js";
+
 import { adminLayout } from "../views/layout.js";
 import { renderLogin, renderFirstRun, renderSetup, renderSettings, renderTheme, renderDashboard } from "../views/admin/forms.js";
 import { renderMedia, renderModules, renderUsers, renderUserEdit } from "../views/admin/system.js";
@@ -30,7 +28,7 @@ admin.use(noStore);
 const view = (req, res, { title, body, active = "", wide = false, subtitle = "", actions = "", breadcrumbs = [] }) => {
   res.send(adminLayout({
     title, body, active, wide, subtitle, actions, breadcrumbs,
-    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf
+    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf, nonce: res.locals.nonce
   }));
 };
 
@@ -38,17 +36,21 @@ const view = (req, res, { title, body, active = "", wide = false, subtitle = "",
 
 admin.get("/login", (req, res) => {
   if (req.user) return res.redirect("/admin");
-  res.send(renderLogin({ next: String(req.query.next || "/admin"), businessName: config().business.name, hasUsers: countUsers() > 0 }));
+  res.send(renderLogin({ next: safeNext(req.query.next), businessName: config().business.name, hasUsers: countUsers() > 0 }));
 });
 
-admin.post("/login", rateLimit({ windowMs: 60_000, max: 10, message: "Too many sign-in attempts. Wait a minute." }), (req, res) => {
+admin.post("/login", sameOrigin, rateLimit({
+  windowMs: 60_000, max: 10, message: "Too many sign-in attempts. Wait a minute.",
+  // The per-account key means a burst against one known email cannot be spread
+  // across rotating source IPs (which req.ip alone would allow).
+  key: (req) => `${req.ip}:${String(req.body?.email || "").toLowerCase()}`
+}), (req, res) => {
   const user = verifyLogin(req.body?.email, req.body?.password, req.ip);
   if (!user) {
-    return res.status(401).send(renderLogin({ error: "Email or password is incorrect.", next: String(req.body?.next || "/admin"), businessName: config().business.name }));
+    return res.status(401).send(renderLogin({ error: "Email or password is incorrect.", next: safeNext(req.body?.next), businessName: config().business.name }));
   }
   setSessionCookie(req, res, user);
-  const next = String(req.body?.next || "/admin");
-  return res.redirect(next.startsWith("/") && !next.startsWith("//") ? next : "/admin");
+  return res.redirect(safeNext(req.body?.next));
 });
 
 admin.post("/logout", requireAuth, (req, res) => {
@@ -64,13 +66,17 @@ firstRun.get("/", (req, res) => {
   if (countUsers() > 0) return res.redirect("/admin/login");
   res.send(renderFirstRun({}));
 });
-firstRun.post("/", rateLimit({ windowMs: 60_000, max: 6 }), (req, res) => {
-  if (countUsers() > 0) return res.redirect("/admin/login");
+firstRun.post("/", sameOrigin, rateLimit({ windowMs: 60_000, max: 6 }), (req, res) => {
   const values = { business_name: str(req.body?.business_name, 120), name: str(req.body?.name, 120), email: str(req.body?.email, 160) };
   try {
     if (req.body?.password !== req.body?.password2) throw new Error("The passwords do not match.");
     if (!values.business_name) throw new Error("Enter your business name.");
-    const user = createUser({ email: values.email, name: values.name, password: req.body?.password, role: "owner" });
+    // The emptiness check and the insert share the write lock, so two
+    // simultaneous first posts cannot both create an owner.
+    const user = tx(() => {
+      if (countUsers() > 0) throw new Error("An owner account already exists. Sign in instead.");
+      return createUser({ email: values.email, name: values.name, password: req.body?.password, role: "owner" });
+    }, "IMMEDIATE");
     saveConfig("business", { name: values.business_name });
     setSessionCookie(req, res, user);
     audit(user, "setup.owner_created", "user", user.id, "", req.ip);

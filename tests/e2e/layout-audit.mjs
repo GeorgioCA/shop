@@ -1,7 +1,7 @@
 import { chromium } from "playwright-core";
 import { setupInstance } from "../helpers.js";
 
-const EXECUTABLE = "/root/.cache/ms-playwright/chromium-1248/chrome-linux-arm64/chrome";
+const EXECUTABLE = process.env.CHROME_PATH || "/root/.cache/ms-playwright/chromium-1248/chrome-linux-arm64/chrome";
 const browser = await chromium.launch({ executablePath: EXECUTABLE, args: ["--no-sandbox"] });
 
 for (const preset of ["restaurant", "auto-repair", "professional-services", "retail-general"]) {

@@ -122,7 +122,9 @@ export function setSessionCookie(req, res, user) {
 }
 
 export function clearSessionCookie(res) {
-  res.clearCookie(SESSION_COOKIE, { path: "/" });
+  // Attributes other than name/path/domain are not part of cookie identity,
+  // but keep them aligned with setSessionCookie so no browser quirk leaves it behind.
+  res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "lax", path: "/" });
 }
 
 /* ---------------------------------- csrf --------------------------------- */
@@ -166,6 +168,13 @@ export function originAllowed(req) {
   } catch {
     return false;
   }
+}
+
+// Same as originAllowed, as middleware. Used on routes that have no session yet
+// (login, first-run setup) and therefore cannot rely on the CSRF token alone.
+export function sameOrigin(req, res, next) {
+  if (originAllowed(req)) return next();
+  return res.status(403).send("Cross-origin request blocked.");
 }
 
 /* ---------------------------------- users -------------------------------- */

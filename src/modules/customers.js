@@ -1,6 +1,7 @@
 // Customer records are created by orders and bookings; a customer account is
 // optional. One installation only ever holds its own customers.
 
+import crypto from "node:crypto";
 import { db, insert } from "../core/db.js";
 import { hashPassword, verifyPassword, passwordProblem } from "../core/auth.js";
 import { nowIso, str, int, bool, emailOk, paginate } from "../core/util.js";
@@ -89,21 +90,53 @@ export function setCustomerMarketing(customerId, on) {
 
 /* ----------------------------- customer accounts -------------------------- */
 
-export function createCustomerAccount(email, password, name = "") {
+const VERIFICATION_TTL_MS = 48 * 3600_000;
+
+/**
+ * Start account registration. The password hash is parked in
+ * pending_password_hash and only becomes the real password after the owner of
+ * the email address clicks the verification link. Without this, anyone could
+ * claim any email that has ever ordered.
+ */
+export function requestCustomerAccount(email, password, name = "") {
   const customer = getCustomerByEmail(email);
   if (!customer) throw new Error("Place an order first, then create an account with the same email.");
   if (customer.password_hash) throw new Error("An account already exists for that email. Sign in instead.");
   const problem = passwordProblem(password);
   if (problem) throw new Error(problem);
-  db.prepare("UPDATE customers SET password_hash = ?, name = ? WHERE id = ?")
-    .run(hashPassword(password), str(name, 120) || customer.name, customer.id);
-  return getCustomer(customer.id);
+  const token = crypto.randomBytes(24).toString("base64url");
+  db.prepare(
+    "UPDATE customers SET pending_password_hash = ?, name = ?, verification_token = ?, verification_expires = ? WHERE id = ?"
+  ).run(hashPassword(password), str(name, 120) || customer.name, token, new Date(Date.now() + VERIFICATION_TTL_MS).toISOString(), customer.id);
+  return { customer: getCustomer(customer.id), token };
+}
+
+export function pendingCustomerVerification(token) {
+  if (!token) return null;
+  const row = db.prepare("SELECT * FROM customers WHERE verification_token = ?").get(String(token));
+  if (!row || !row.pending_password_hash) return null;
+  if (row.verification_expires && new Date(row.verification_expires).getTime() < Date.now()) return null;
+  return row;
+}
+
+/** Completes registration: activates the parked password and signs old sessions out. */
+export function verifyCustomerAccount(token) {
+  const row = pendingCustomerVerification(token);
+  if (!row) return null;
+  db.prepare(
+    `UPDATE customers SET password_hash = pending_password_hash, pending_password_hash = NULL,
+       verification_token = NULL, verification_expires = NULL, session_version = session_version + 1
+     WHERE id = ?`
+  ).run(row.id);
+  return getCustomer(row.id);
 }
 
 export function setCustomerPassword(customerId, password) {
   const problem = passwordProblem(password);
   if (problem) throw new Error(problem);
-  db.prepare("UPDATE customers SET password_hash = ? WHERE id = ?").run(hashPassword(password), customerId);
+  // Bumping session_version signs out every existing customer session.
+  db.prepare("UPDATE customers SET password_hash = ?, pending_password_hash = NULL, verification_token = NULL, verification_expires = NULL, session_version = session_version + 1 WHERE id = ?")
+    .run(hashPassword(password), customerId);
 }
 
 export function verifyCustomer(email, password) {
@@ -113,7 +146,8 @@ export function verifyCustomer(email, password) {
 }
 
 export function customerPoints(customerId) {
-  return db.prepare("SELECT COALESCE(SUM(points),0) AS n FROM loyalty_ledger WHERE customer_id = ?").get(customerId).n;
+  if (!customerId) return 0;
+  return db.prepare("SELECT COALESCE(SUM(points),0) AS n FROM loyalty_ledger WHERE customer_id = ?").get(Number(customerId)).n;
 }
 
 export function addPoints(customerId, points, reason, orderId = null) {

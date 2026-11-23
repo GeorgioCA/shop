@@ -23,7 +23,7 @@ contentAdmin.use((req, res, next) => {
 const view = (req, res, { title, body, active = "", wide = false, subtitle = "", actions = "", status = 200 }) => {
   res.status(status).send(adminLayout({
     title, body, active, wide, subtitle, actions,
-    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf
+    user: req.user, flash: popFlash(req, res), csrf: res.locals.csrf, nonce: res.locals.nonce
   }));
 };
 

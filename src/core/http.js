@@ -28,7 +28,10 @@ export function popFlash(req, res) {
 function readCookieRaw(req, name) {
   for (const part of String(req.headers.cookie || "").split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === name) return decodeURIComponent(v.join("="));
+    if (k === name) {
+      const raw = v.join("=");
+      try { return decodeURIComponent(raw); } catch { return raw; }
+    }
   }
   return "";
 }

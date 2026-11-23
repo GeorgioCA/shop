@@ -16,12 +16,14 @@ The platform is one Node process with one SQLite database and one uploads direct
 | `SESSION_SECRET` | yes | HMAC key for admin sessions and customer logins. `openssl rand -hex 32`. Rotating it signs everyone out. |
 | `DATA_DIR` | yes | SQLite + uploads. Use `/data` in Docker. |
 | `PORT` | no | Default `3000`. |
+| `TRUST_PROXY` | no | Reverse-proxy hops in front of the app. Default `1`. `true` trusts the immediate connection; a comma-separated IP/CIDR list is also accepted. This drives `req.ip` (rate limiting) and the secure-cookie check. |
 | `STRIPE_SECRET_KEY` | no | Enables Stripe Checkout once the Card payments module is on. |
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | Signing secret for `/api/stripe/webhook`. |
 | `STRIPE_AUTOMATIC_TAX` | no | `1` enables Stripe Tax on sessions. |
-| `RESEND_API_KEY` | no | Transactional email. Without it, mail is logged as skipped. |
+| `RESEND_API_KEY` | no | Transactional email. Without it, mail is logged as skipped and **customer account registration is disabled** (sign-up is confirmed with an emailed link). |
+| `RESEND_API_URL` | no | Override the Resend API endpoint (self-hosted, proxied or test installs). |
 | `EMAIL_FROM` | no | Fallback sender; Settings → Email overrides it. |
-| `PAYMENTS_DEMO` | no | `1` simulates successful card payments. Never in production. |
+| `PAYMENTS_DEMO` | no | `1` simulates successful card payments. Never in production — the admin shows a warning banner while it is on. |
 
 Business identity, branding, modules, products, services, content and payment behaviour are configured in `/admin`. They are deliberately **not** environment variables.
 

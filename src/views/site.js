@@ -12,6 +12,7 @@ import {
 import { renderSections, paragraphs, productCard, serviceCard } from "./sections.js";
 import { csrfField } from "./layout.js";
 import { availability, availabilityWindow } from "../modules/bookings.js";
+import { loyaltySettings } from "../modules/loyalty.js";
 
 const moneyFmt = (cents) => money(cents, config().business.currency, config().business.locale);
 const b = () => config().business;
@@ -88,7 +89,7 @@ export function renderCatalog({ products, categories, activeCategory = "", query
   </div></section>`;
 }
 
-export function renderProduct({ product, members, reviews, reviewAvg, csrf, related = [] }) {
+export function renderProduct({ product, members, reviews, reviewAvg, csrf, related = [], nonce = "" }) {
   const cfg = config();
   const images = [product.image, ...(product.gallery || [])].filter(Boolean);
   const soldOut = product.sold_out || (product.track_stock && product.stock <= 0);
@@ -168,7 +169,7 @@ export function renderProduct({ product, members, reviews, reviewAvg, csrf, rela
   </div></section>` : ""}
 
   ${related.length ? `<section class="section"><div class="wrap"><h2>You might also like</h2><div class="grid grid-3">${related.map(productCard).join("")}</div></div></section>` : ""}
-  <script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>`;
+  <script type="application/ld+json"${nonce ? ` nonce="${esc(nonce)}"` : ""}>${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>`;
 }
 
 const badgeSoldOut = () => `<span class="badge badge-danger">Sold out</span>`;
@@ -332,7 +333,10 @@ export function renderCheckout({ csrf, customer = null, points = null }) {
           <p class="help" data-code-msg aria-live="polite"></p>
         </details>` : ""}
 
-        ${points && points.available >= 100 ? `<label class="check"><input type="checkbox" name="use_points" value="1"><span>Use my ${esc(points.available)} loyalty points (up to ${esc(moneyFmt(Math.floor(points.available / 100) * 500))} off)</span></label>` : ""}
+        ${points && points.available >= 100 ? (() => {
+          const per100 = Math.max(1, Math.round(loyaltySettings().redeemCentsPer100 || 500));
+          return `<label class="check"><input type="checkbox" name="use_points" value="1"><span>Use my ${esc(points.available)} loyalty points (up to ${esc(moneyFmt(Math.floor(points.available / 100) * per100))} off)</span></label>`;
+        })() : ""}
 
         <div class="checkout-submit">
           <button class="btn btn-primary btn-lg btn-block" type="submit" data-checkout-submit>Place order</button>

@@ -8,6 +8,7 @@ import { mediaUrl } from "../core/media.js";
 import { esc, money } from "../core/util.js";
 import { icon, flashMessage, avatar } from "./components.js";
 import { can } from "../core/auth.js";
+import { demoPayments } from "../core/payments.js";
 import { asset } from "../core/assets.js";
 
 const FONTS = {
@@ -60,11 +61,12 @@ export function footerLinks() {
 /* --------------------------------- layout -------------------------------- */
 
 export function siteLayout({
-  title, description = "", body, active = "", canonical = "", noindex = false, jsonLd = null, bodyClass = "", csrf = "", flash = null
+  title, description = "", body, active = "", canonical = "", noindex = false, jsonLd = null, bodyClass = "", csrf = "", flash = null, nonce = ""
 }) {
   const cfg = config();
   const b = cfg.business;
   const s = cfg.site;
+  const n = nonce ? ` nonce="${esc(nonce)}"` : "";
   const fullTitle = title ? `${title} · ${b.name}` : (s.seoTitle || `${b.name}${b.tagline ? ` — ${b.tagline}` : ""}`);
   const desc = description || s.seoDescription || b.description || "";
   const logo = cfg.theme.logo;
@@ -95,7 +97,8 @@ ${cfg.theme.ogImage ? `<meta property="og:image" content="${esc(mediaUrl(cfg.the
 ${cfg.theme.favicon ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.favicon))}">` : cfg.theme.logo ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.logo))}">` : ""}
 <link rel="stylesheet" href="${asset("/styles.css")}">
 <style>${themeCss()}</style>
-${jsonLd ? `<script type="application/ld+json">${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>` : ""}
+${jsonLd ? `<script type="application/ld+json"${n}>${JSON.stringify(jsonLd).replace(/</g, "\\u003c")}</script>` : ""}
+${cartScriptConfig(nonce)}
 </head>
 <body class="${esc(bodyClass)}">
 <a class="skip" href="#main">Skip to content</a>
@@ -160,7 +163,7 @@ ${flash ? `<div class="wrap flash-wrap">${flashMessage(flash)}</div>` : ""}
   </div>
 </footer>
 ${cartOn ? cartDrawer() : ""}
-<script src="${asset("/app.js")}" defer></script>
+<script src="${asset("/app.js")}"${n} defer></script>
 </body></html>`;
 }
 
@@ -179,9 +182,9 @@ function cartDrawer() {
 </aside>`;
 }
 
-export function cartScriptConfig() {
+export function cartScriptConfig(nonce = "") {
   const c = config();
-  return `<script>window.__SHOP__=${JSON.stringify({
+  return `<script${nonce ? ` nonce="${esc(nonce)}"` : ""}>window.__SHOP__=${JSON.stringify({
     currency: c.business.currency,
     locale: c.business.locale,
     minOrderCents: c.commerce.minOrderCents,
@@ -249,12 +252,13 @@ export function adminNav(user) {
 }
 
 export function adminLayout({
-  title, body, active = "", user, flash = null, breadcrumbs = [], wide = false, subtitle = "", actions = "", csrf = ""
+  title, body, active = "", user, flash = null, breadcrumbs = [], wide = false, subtitle = "", actions = "", csrf = "", nonce = ""
 }) {
   const cfg = config();
   const b = cfg.business;
   const groups = adminNav(user);
   const setupIncomplete = !cfg.setup.completed;
+  const n = nonce ? ` nonce="${esc(nonce)}"` : "";
 
   return `<!doctype html>
 <html lang="en">
@@ -302,6 +306,7 @@ ${cfg.theme.favicon ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.favicon))
     </header>
     <div class="admin-content ${wide ? "wide" : ""}">
       ${flashMessage(flash)}
+      ${demoPayments() ? `<div class="callout callout-warn"><div><strong>Demo payment mode is on.</strong> Card checkouts are simulated and every order arrives as paid. Disable <code>PAYMENTS_DEMO</code> / <code>DEMO_MODE</code> before going live.</div></div>` : ""}
       <div class="page-head">
         <div><h1>${esc(title)}</h1>${subtitle ? `<p class="page-sub">${esc(subtitle)}</p>` : ""}</div>
         ${actions ? `<div class="page-actions">${actions}</div>` : ""}
@@ -310,6 +315,6 @@ ${cfg.theme.favicon ? `<link rel="icon" href="${esc(mediaUrl(cfg.theme.favicon))
     </div>
   </div>
 </div>
-<script src="${asset("/admin.js")}" defer></script>
+<script src="${asset("/admin.js")}"${n} defer></script>
 </body></html>`;
 }

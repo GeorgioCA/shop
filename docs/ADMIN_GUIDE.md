@@ -136,7 +136,9 @@ Owner-only. Create a user with a temporary password (≥ 10 characters, letter +
 
 ## Newsletter and loyalty
 
-**Subscribers** lists footer signups with CSV export. **Loyalty** awards points on paid orders (default 1 point per dollar, 100 points = $5, capped at 50% of an order); customers redeem at checkout and see their balance in their account.
+**Subscribers** lists footer signups with CSV export. **Loyalty** awards points on paid orders (default 1 point per dollar, 100 points = $5, capped at 50% of an order — both rates live in the loyalty module config); customers redeem at checkout and see their balance in their account.
+
+Customer accounts are optional and require the email key: a customer registers on the site, receives a confirmation link, and only gets a working password after clicking it. That is what stops anyone from claiming an account on someone else's email. Setting a customer's password in the back office signs their sessions out everywhere.
 
 ## Data safety
 

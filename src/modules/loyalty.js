@@ -22,6 +22,19 @@ export function awardPoints(customerId, totalCents, orderId) {
   return points;
 }
 
+// Reverses the points earned by one order (refund, cancellation after payment).
+// Redeemed points are not re-credited: the goods were still supplied.
+export function revokePointsForOrder(orderId) {
+  const earned = db.prepare(
+    "SELECT COALESCE(SUM(points),0) AS n FROM loyalty_ledger WHERE order_id = ? AND points > 0"
+  ).get(orderId).n;
+  if (earned <= 0) return 0;
+  const row = db.prepare("SELECT customer_id FROM loyalty_ledger WHERE order_id = ? AND points > 0").get(orderId);
+  if (!row) return 0;
+  addPoints(row.customer_id, -earned, "Reversed on refund", orderId);
+  return earned;
+}
+
 export function redeemable(customerId, subtotalCents) {
   if (!isEnabled("loyalty") || !customerId) return { points: 0, cents: 0 };
   const { redeemCentsPer100, maxRedeemPercent } = loyaltySettings();

@@ -1,7 +1,7 @@
 // Pages, ordered sections, navigation, FAQs and testimonials.
 
 import { db, insert, update, jsonParse } from "../core/db.js";
-import { id, nowIso, str, int, bool, slugify, uniqueSlug } from "../core/util.js";
+import { id, nowIso, str, int, bool, slugify, uniqueSlug, urlOk } from "../core/util.js";
 import { normalizeSections, normalizeSection, SECTION_TYPES } from "../content/sections.js";
 
 /* --------------------------------- pages ---------------------------------- */
@@ -137,6 +137,9 @@ export function saveNavItem(input) {
   const label = str(input.label, 60);
   const url = str(input.url, 300);
   if (!label || !url) throw new Error("A link needs a label and a URL.");
+  // Nav links render as href attributes; without this a content editor could
+  // save javascript: or a protocol-relative redirect.
+  if (!urlOk(url)) throw new Error("The link must start with http://, https://, mailto:, tel: or /.");
   const row = {
     location: input.location === "footer" ? "footer" : "header",
     label,

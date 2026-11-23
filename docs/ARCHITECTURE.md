@@ -117,15 +117,18 @@ Pages store sections as ordered JSON (`[{ type, id, ...fields }]`). Reordering i
 ## Authentication and authorization
 
 - Passwords: `scrypt` (N=16384, r=8, p=1, 64-byte key, random salt), constant-time comparison.
-- Sessions: HMAC-signed cookie carrying user id, expiry and `session_version`. Bumping the version (password change, role change, deactivation) revokes every existing cookie.
+- Sessions: HMAC-signed cookie carrying user id, expiry and `session_version`. Bumping the version (password change, role change, deactivation) revokes every existing cookie. Customer sessions carry the same version guard.
+- Customer accounts: registration parks the password and emails a single-use confirmation link; the password only activates when the link is clicked. Accounts therefore cannot be claimed on an email the claimant does not own.
 - CSRF: random `shop_csrf` cookie (readable by JS) mirrored in a hidden `_csrf` field or `X-CSRF-Token` header, plus an Origin check for admin writes. Multipart uploads verify the token after multer parses the body.
 - RBAC: four roles mapped to named permissions; every admin route declares `requirePermission(...)`.
-- Rate limits: login, checkout, booking, contact, newsletter and account forms use in-process buckets keyed by IP and path.
-- Uploads: MIME allow-list, 8 MB cap, sharp re-encode for rasters (strips payloads/EXIF), SVG sanitisation, random filenames, `nosniff` and immutable caching on `/media`.
+- Capability URLs: `/order/:token` and `/booking/:token` look up by token only (CSPRNG-generated). Short, date-stamped order/booking numbers are never usable as public URLs.
+- Links: every value that lands in an `href` is validated (`urlOk`) — no `javascript:`, `data:` or protocol-relative redirects; login `next` values go through `safeNext`.
+- Rate limits: login (per IP *and* per account), checkout, pricing, discount checks, booking, contact, newsletter and account forms use in-process buckets keyed by IP and path.
+- Uploads: MIME allow-list, 8 MB cap, sharp re-encode for rasters (strips payloads/EXIF), SVG sanitisation (no script, SMIL animation, event handlers; fragment-only hrefs), random filenames, `nosniff` and immutable caching on `/media`, and a sandboxing CSP on media responses.
 - Output: every database or user value is escaped at the point of interpolation; the few trusted fragments are constructed by our own components.
-- Headers: CSP (self only), frame-deny, referrer policy, permissions policy.
+- Headers: CSP (self only, per-request script nonces), HSTS when the request is secure, frame-deny, referrer policy, permissions policy.
 
-The admin fails closed if Stripe/Resend are missing — those degrade in capability, not into errors. The store works with no Stripe key (offline methods) and no email key (logged, skipped).
+The admin fails closed if Stripe/Resend are missing — those degrade in capability, not into errors. The store works with no Stripe key (offline methods) and no email key (logged, skipped), except that customer account registration needs the email key because sign-up is confirmed by a emailed link.
 
 ## Presets
 
